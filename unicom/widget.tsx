@@ -25,12 +25,13 @@ import { rpt } from './utils'
 const API_URL =
   'https://m.client.10010.com/mobileserviceimportant/home/queryUserInfoSeven?version=iphone_c@8.0200&desmobiel=&showType=0'
 const BOXJS_URL = 'https://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie'
-// Loon 抓 Cookie 用的 key 是 'unicom_cookie'，和上面 anker 用的
-// @ChinaUnicom.10010v4.cookie 不是同一个 key，必须两个都查，
-// 否则 Loon 弹“已抓取”，小组件却报没拿到数据。
-// 顺序：先查原版 @… key（兼容已存那边的用户），再查 unicom_cookie。
-// BoxJs 是本机服务，通常走 http，所以 unicom_cookie 那条用 http。
+// john 实际用的是 githubdulong 的 ChinaUnicom_Multi.js（anker v2.6.16 多账户版），
+// 它的 BoxJs key 是 '@YaYa_10010.cookie'（dompling 抓 Cookie 脚本的 APIKey），
+// 走 http://boxjs.com/query/data/@YaYa_10010.cookie，
+// 根本不是 @ChinaUnicom.10010v4.cookie，所以之前查不到。
+// 三个 key 都查：YaYa 优先（john 现有的），再查 anker 的，再查 Loon 的 unicom_cookie。
 const BOXJS_URLS = [
+  'http://boxjs.com/query/data/@YaYa_10010.cookie',
   BOXJS_URL,
   'http://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie',
   'http://boxjs.com/query/data/unicom_cookie',

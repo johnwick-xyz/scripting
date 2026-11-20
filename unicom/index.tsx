@@ -1,67 +1,79 @@
 import {
   Button,
-  HStack,
   List,
   Navigation,
   NavigationStack,
-  Path,
-  Script,
   Section,
-  SecureField,
   Text,
-  Widget,
-  useEffect,
+  fetch,
   useState,
 } from 'scripting'
 
-const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
-const prefPath = Path.join(root, 'preference.json')
+// 诊断用：在 Scripting App 里跑，不是小组件
+// 依次试 BoxJs 的几个地址，看哪个能读到 Cookie
+// 只显示长度和前 10 个字符，不会把完整 Cookie 显示出来
+
+const URLS = [
+  'http://boxjs.com/query/data/@YaYa_10010.cookie',
+  'https://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie',
+  'http://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie',
+  'http://boxjs.com/query/data/unicom_cookie',
+  'https://boxjs.com/query/data/unicom_cookie',
+]
+
+function mask(v: string) {
+  if (!v) return '（空）'
+  return `长度 ${v.length}，开头 ${v.slice(0, 10)}…`
+}
 
 function App() {
-  const [cookie, setCookie] = useState<string>('')
-  const [loaded, setLoaded] = useState(false)
+  const [results, setResults] = useState<string[]>(['点下面“开始测试”'])
+  const [testing, setTesting] = useState(false)
 
-  useEffect(() => {
-    if (FileManager.existsSync(prefPath)) {
+  const run = async () => {
+    setTesting(true)
+    const out: string[] = []
+    for (const url of URLS) {
       try {
-        const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
-        if (pref.cookie) setCookie(pref.cookie)
+        const res = await fetch(url)
+        const text = await res.text()
+        let val = ''
+        try {
+          const j = JSON.parse(text)
+          val = typeof j === 'string' ? j : j.val || j.data || j.value || ''
+          if (typeof val !== 'string') val = JSON.stringify(val)
+        } catch (e) {
+          val = text
+        }
+        out.push(`${url}\n  状态 ${res.status}，${val ? mask(val) : '没读到值，原文前 50 字：' + text.slice(0, 50)}`)
       } catch (e) {
-        console.error('Failed to parse preference', e)
+        out.push(`${url}\n  报错：${String(e)}`)
       }
     }
-    setLoaded(true)
-  }, [])
-
-  useEffect(() => {
-    if (!loaded) return
-    if (!FileManager.existsSync(root)) {
-      FileManager.createDirectorySync(root, true)
-    }
-    FileManager.writeAsStringSync(prefPath, JSON.stringify({ cookie }))
-    Widget.reloadAll()
-  }, [cookie, loaded])
+    setResults(out)
+    setTesting(false)
+  }
 
   return (
     <NavigationStack>
-      <List navigationTitle="中国联通">
-        <Section header={<Text>Cookie</Text>}>
-          <HStack>
-            <Text>Cookie</Text>
-            <SecureField title="粘贴联通 Cookie..." value={cookie} onChanged={setCookie} />
-          </HStack>
-        </Section>
-        <Section header={<Text>怎么拿 Cookie</Text>}>
-          <Text foregroundStyle="secondaryLabel">
-            1. Loon 装好 BoxJs，用重写抓一次：打开联通 App 首页 -&gt; 剩余流量 -&gt;
-            语音，小组件会自动从 BoxJs 读，不用填这里。
-          </Text>
-          <Text foregroundStyle="secondaryLabel">
-            2. 也可以手动把抓到的完整 Cookie 粘贴到上面，Cookie 里要有 JSESSIONID，过期后重新抓一次。
-          </Text>
-        </Section>
+      <List navigationTitle="BoxJs测试">
         <Section>
-          <Button title="预览小组件" action={() => Widget.preview()} />
+          <Button title={testing ? '测试中…' : '开始测试'} action={run} />
+        </Section>
+        <Section header={<Text>结果（Cookie 只显示长度和开头）</Text>}>
+          {results.map((r, i) => (
+            <Text key={String(i)} foregroundStyle="secondaryLabel">
+              {r}
+            </Text>
+          ))}
+        </Section>
+        <Section header={<Text>怎么看</Text>}>
+          <Text foregroundStyle="secondaryLabel">
+            哪一行显示“长度”大于 0，就是那个 key 能读到，告诉我那一行的地址。
+          </Text>
+          <Text foregroundStyle="secondaryLabel">
+            四行都报错 / 都没读到值，就是 BoxJs 这个地址在 Scripting 里打不通，或 key 根本不是这两个。
+          </Text>
         </Section>
       </List>
     </NavigationStack>
