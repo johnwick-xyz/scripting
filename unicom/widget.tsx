@@ -53,6 +53,7 @@ interface WidgetData {
   flow: { number: string; unit: string; title: string; remainPct: number | null }
   voice: { number: string; unit: string; title: string; remainPct: number | null }
   point: { number: string; title: string } | null
+  flowUsedGb?: number | null
   updatedAt: string
   fromCache: boolean
   error: string
@@ -205,10 +206,12 @@ function BarRow({
       <HStack spacing={8}>
         <ZStack alignment="leading">
           <Capsule frame={{ width: barWidth, height: barH }} fill="rgba(0,0,0,0.08)" />
-          <Capsule
-            frame={{ width: Math.max(barH, (barWidth * p) / 100), height: barH }}
-            fill="rgba(34,197,94,1)"
-          />
+          {pct != null && (
+            <Capsule
+              frame={{ width: Math.max(barH, (barWidth * p) / 100), height: barH }}
+              fill="rgba(34,197,94,1)"
+            />
+          )}
         </ZStack>
         <Text
           font={pctFont}
@@ -335,12 +338,14 @@ function WidgetView({ data }: { data: WidgetData }) {
       </VStack>
     )
   }
-  // 已用流量：剩余 x 已用% / 剩余%
+  // 已用流量：优先用 OCS 直接给的已用值；没有时用 剩余 x 已用% / 剩余% 反推
   const remainNum = parseFloat(flow.number)
   const usedFlow =
-    flow.remainPct != null && flow.remainPct > 0 && flow.remainPct < 100 && !isNaN(remainNum)
-      ? `${((remainNum * (100 - flow.remainPct)) / flow.remainPct).toFixed(2)}${flow.unit || 'GB'}`
-      : null
+    typeof data.flowUsedGb === 'number' && data.flowUsedGb > 0
+      ? `${data.flowUsedGb.toFixed(2)}${flow.unit || 'GB'}`
+      : flow.remainPct != null && flow.remainPct > 0 && flow.remainPct < 100 && !isNaN(remainNum)
+        ? `${((remainNum * (100 - flow.remainPct)) / flow.remainPct).toFixed(2)}${flow.unit || 'GB'}`
+        : null
   const flowBar = (
     <BarRow
       label="剩余流量"
@@ -390,14 +395,14 @@ function WidgetView({ data }: { data: WidgetData }) {
   if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
     return (
       <VStack
-        padding={12}
+        padding={8}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
-        spacing={6}
+        spacing={4}
         alignment="leading"
       >
         <Header compact />
-        <Balance fee={fee} big={24} />
+        <Balance fee={fee} big={20} />
         <BarRow
           label="剩余流量"
           value={`${flow.number}${flow.unit}`}
@@ -455,6 +460,97 @@ async function getCookie(): Promise<string> {
   return ''
 }
 
+async function getLimits(): Promise<{ flow: number; voice: number }> {
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      return {
+        flow: parseFloat(pref.flowLimit) || 0,
+        voice: parseFloat(pref.voiceLimit) || 0,
+      }
+    }
+  } catch (e) {}
+  return { flow: 0, voice: 0 }
+}
+
+// 百分比的来源（按 anker v2.6.16 的逻辑，L989-1003）：
+//   接口的 persent 有值时：剩余% = 100 - persent
+//   persent 缺失/为 0 时：用用户填的套餐总量算，剩余% = 剩余 / 总量 x 100
+//   都没有时：remainPct = null，进度条不画绿条、显示 —，
+//     绝不再默认 100%（john 真机上流量和通话都显示 100% 就是
+//     因为 persent 缺失，之前代码默认成了 100）。
+function remainPctFrom(persent: any, remainNum: number, limit: number): number | null {
+  const used = persent != null ? Number(persent) : NaN
+  if (!isNaN(used) && used > 0) return Math.max(0, Math.min(100, 100 - used))
+  if (limit > 0 && !isNaN(remainNum) && remainNum >= 0)
+    return Math.max(0, Math.min(100, (remainNum / limit) * 100))
+  return null
+}
+
+// 余量明细接口（联通官方 App 用的核心接口，来源：
+// Shaobo-Pocket-Carrier 的 unicom.py，fetch_all_data 第 3.5 步）：
+//   POST https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune
+//   同一个 Cookie 就能用（.10010.com 域下）。
+// 返回字段：
+//   canUseFlowAll / canuseFlowAllUnit：剩余流量（GB/MB）
+//   allUserFlow：已用流量（MB）
+//   canUseValueAll / canuseVoiceAllUnit：剩余通话（分钟）
+//   voiceHeadUsed：已用通话（分钟）
+//   voiceSumresource：通话套餐总量（分钟）
+// 总量 = 剩余 + 已用（流量）；通话总量优先用 voiceSumresource，
+// 不可靠时用 剩余 + 已用。这样百分比和已用流量都能直接从
+// 联通数据算出来，不用手动填套餐总量。
+async function fetchOcs(cookie: string): Promise<{
+  flowRemainGb: number
+  flowUsedGb: number
+  voiceRemain: number
+  voiceUsed: number
+  voiceTotal: number
+} | null> {
+  try {
+    const res = await fetch(
+      'https://mxx.client.10010.com/servicequerybusiness/operationservice/queryOcsPackageFlowLeftContentRevisedInJune',
+      {
+        method: 'POST',
+        headers: {
+          Origin: 'https://imgxx.client.10010.com',
+          Referer: 'https://imgxx.client.10010.com/yuliangchaxunsf/index.html',
+          'User-Agent':
+            'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) unicom{version:iphone_c@13.0100};ltst;OSVersion/26.1',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Cookie: cookie,
+        },
+        body: 'duanlianjieabc=&channelCode=&serviceType=&saleChannel=&externalSources=&contactCode=&ticket=&ticketPhone=&ticketChannel=&mobile1=&language=chinese',
+      },
+    )
+    const j: any = await res.json()
+    if (!j || typeof j !== 'object') return null
+    let flowRemainGb = parseFloat(j.canUseFlowAll)
+    if (isNaN(flowRemainGb)) return null
+    const flowUnit = String(j.canuseFlowAllUnit || 'GB').toUpperCase()
+    if (flowUnit === 'MB') flowRemainGb = flowRemainGb / 1024
+    const flowUsedGb = (parseFloat(j.allUserFlow) || 0) / 1024
+    const voiceRemain = parseFloat(j.canUseValueAll)
+    const voiceUsed = parseFloat(j.voiceHeadUsed) || 0
+    const voiceSum = parseFloat(j.voiceSumresource) || 0
+    const voiceTotal =
+      voiceSum > voiceUsed && voiceSum > (isNaN(voiceRemain) ? 0 : voiceRemain)
+        ? voiceSum
+        : (isNaN(voiceRemain) ? 0 : voiceRemain) + voiceUsed
+    return {
+      flowRemainGb,
+      flowUsedGb,
+      voiceRemain: isNaN(voiceRemain) ? 0 : voiceRemain,
+      voiceUsed,
+      voiceTotal,
+    }
+  } catch (e) {
+    return null
+  }
+}
+
 async function fetchData(cookie: string): Promise<WidgetData> {
   const res = await fetch(API_URL, {
     method: 'GET',
@@ -475,6 +571,8 @@ async function fetchData(cookie: string): Promise<WidgetData> {
     error: '',
   }
   const list = (res.data && res.data.dataList) || []
+  // 先拿 OCS 明细（总量直接从联通读），失败就用下面的 persent/手动填
+  const ocs = await fetchOcs(cookie)
   for (const item of list) {
     if (item.type === 'fee') {
       out.fee = {
@@ -484,21 +582,37 @@ async function fetchData(cookie: string): Promise<WidgetData> {
       }
     }
     if (item.type === 'flow') {
-      const used = item.persent != null ? Number(item.persent) : null
+      const limits = await getLimits()
+      let remainPct: number | null = null
+      if (ocs && ocs.flowRemainGb + ocs.flowUsedGb > 0) {
+        remainPct = Math.max(
+          0,
+          Math.min(100, (ocs.flowRemainGb / (ocs.flowRemainGb + ocs.flowUsedGb)) * 100),
+        )
+      } else {
+        remainPct = remainPctFrom(item.persent, parseFloat(item.number), limits.flow)
+      }
       out.flow = {
         number: String(item.number),
         unit: item.unit || '',
         title: (item.remainTitle || '剩余流量').replace(/通用/g, ''),
-        remainPct: used != null ? Math.max(0, Math.min(100, 100 - used)) : null,
+        remainPct,
       }
+      if (ocs && ocs.flowUsedGb > 0) out.flowUsedGb = ocs.flowUsedGb
     }
     if (item.type === 'voice') {
-      const used = item.persent != null ? Number(item.persent) : null
+      const limits = await getLimits()
+      let remainPct: number | null = null
+      if (ocs && ocs.voiceTotal > 0) {
+        remainPct = Math.max(0, Math.min(100, (ocs.voiceRemain / ocs.voiceTotal) * 100))
+      } else {
+        remainPct = remainPctFrom(item.persent, parseFloat(item.number), limits.voice)
+      }
       out.voice = {
         number: String(item.number),
         unit: item.unit || '分钟',
         title: item.remainTitle || '语音剩余',
-        remainPct: used != null ? Math.max(0, Math.min(100, 100 - used)) : null,
+        remainPct,
       }
     }
     if (item.type === 'point') {
