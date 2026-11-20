@@ -90,12 +90,12 @@ function ProgressGauge({
       {({ widgetRenderingMode }) => (
         <ZStack>
           <Circle
-            frame={{ width: rpt(58), height: rpt(58) }}
+            frame={{ width: rpt(48), height: rpt(48) }}
             trim={{ from: 0.15, to: 0.85 }}
             rotationEffect={90}
             stroke={{
               shapeStyle: bgColor,
-              strokeStyle: { lineWidth: rpt(4), lineCap: 'round' },
+              strokeStyle: { lineWidth: rpt(3), lineCap: 'round' },
             }}
           />
           <Circle
@@ -107,11 +107,11 @@ function ProgressGauge({
                 startPoint: 'leading',
                 endPoint: 'trailing',
               },
-              strokeStyle: { lineWidth: rpt(4), lineCap: 'round' },
+              strokeStyle: { lineWidth: rpt(3), lineCap: 'round' },
             }}
           />
           <VStack
-            frame={{ width: rpt(50), height: rpt(50) }}
+            frame={{ width: rpt(42), height: rpt(42) }}
             spacing={0}
             background={{
               shape: 'circle',
@@ -123,11 +123,11 @@ function ProgressGauge({
             }}
           >
             <Spacer />
-            <Text font={rpt(8)} foregroundStyle="secondaryLabel" fontWeight="medium">
+            <Text font={rpt(7)} foregroundStyle="secondaryLabel" fontWeight="medium">
               {title}
             </Text>
             <Text
-              font={rpt(12)}
+              font={rpt(11)}
               fontDesign="rounded"
               fontWeight="bold"
               foregroundStyle="label"
@@ -145,7 +145,7 @@ function ProgressGauge({
                   widgetRenderingMode === 'accented' ? 'rgba(0,0,0,0.5)' : iconColor,
               }}
               foregroundStyle="white"
-              font={rpt(12)}
+              font={rpt(11)}
             />
           </VStack>
         </ZStack>
@@ -158,57 +158,67 @@ function WidgetView({ data }: { data: WidgetData }) {
   const { fee, flow, voice, point } = data
   return (
     <VStack
-      padding={rpt(14)}
+      padding={rpt(16)}
       frame={Widget.displaySize}
       modifiers={modifiers().widgetBackground('systemBackground')}
+      spacing={rpt(10)}
     >
-      {/* 四个都是圆环：话费和积分没有总额算不出剩余比例，圆环画满，只做展示 */}
-      <HStack spacing={rpt(15)}>
-        <Spacer />
-        <ProgressGauge
-          title={fee.title}
-          value={`${fee.number}${fee.unit}`}
-          icon="banknote.fill"
-          color={{ r: 248, g: 101, b: 39 }}
-          progress={1}
-        />
-        <Spacer />
-        <ProgressGauge
-          title={flow.title}
-          value={`${flow.number}${flow.unit}`}
-          icon="antenna.radiowaves.left.and.right"
-          color={{ r: 59, g: 201, b: 236 }}
-          progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
-        />
-        <Spacer />
-      </HStack>
-      <HStack spacing={rpt(15)}>
-        <Spacer />
-        <ProgressGauge
-          title={voice.title}
-          value={`${voice.number}${voice.unit}`}
-          icon="phone"
-          color={{ r: 162, g: 207, b: 57 }}
-          progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
-        />
-        <Spacer />
-        <ProgressGauge
-          title={point ? point.title : '可用积分'}
-          value={point ? point.number : '—'}
-          icon="star.fill"
-          color={{ r: 168, g: 130, b: 255 }}
-          progress={1}
-        />
-        <Spacer />
-      </HStack>
-      <HStack>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
+      {/* 间距问题：之前每行放了 3 个 Spacer，Spacer 在 Scripting 里不会均分，
+          两边的被压扁、中间的被撑大，所以左右贴边、中间空一大块。
+          改成固定间距 + 整行居中，左右和中间的空隙就一样了；
+          圆环也从 58 缩到 48，上下不再贴边 */}
+      <VStack spacing={rpt(10)} alignment="center">
+        <HStack spacing={rpt(32)}>
+          <ProgressGauge
+            title={fee.title}
+            value={`${fee.number}${fee.unit}`}
+            icon="banknote.fill"
+            color={{ r: 248, g: 101, b: 39 }}
+            progress={1}
+          />
+          <ProgressGauge
+            title={flow.title}
+            value={`${flow.number}${flow.unit}`}
+            icon="antenna.radiowaves.left.and.right"
+            color={{ r: 59, g: 201, b: 236 }}
+            progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
+          />
+        </HStack>
+        <HStack spacing={rpt(32)}>
+          <ProgressGauge
+            title={voice.title}
+            value={`${voice.number}${voice.unit}`}
+            icon="phone"
+            color={{ r: 162, g: 207, b: 57 }}
+            progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
+          />
+          <ProgressGauge
+            title={point ? point.title : '可用积分'}
+            value={point ? point.number : '—'}
+            icon="star.fill"
+            color={{ r: 168, g: 130, b: 255 }}
+            progress={1}
+          />
+        </HStack>
+      </VStack>
+      <Spacer />
+      {/* 底行之前左右拉满，中间一大段空白，看着散；
+          改成居中一行：红字品牌 + 更新时间，中间用 · 隔开 */}
+      <HStack alignment="center" spacing={rpt(6)}>
+        <Text
+          foregroundStyle="rgba(230,0,39,1)"
+          font={rpt(11)}
+          fontWeight="bold"
+          lineLimit={1}
+        >
           中国联通
         </Text>
-        <Spacer />
+        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1}>
+          ·
+        </Text>
         <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
           {data.fromCache ? '缓存 ' : ''}
-          {data.updatedAt}
+          {data.updatedAt} 更新
         </Text>
       </HStack>
     </VStack>
