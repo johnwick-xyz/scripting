@@ -90,7 +90,7 @@ function ProgressGauge({
       {({ widgetRenderingMode }) => (
         <ZStack>
           <Circle
-            frame={{ width: rpt(48), height: rpt(48) }}
+            frame={{ width: rpt(40), height: rpt(40) }}
             trim={{ from: 0.15, to: 0.85 }}
             rotationEffect={90}
             stroke={{
@@ -111,7 +111,7 @@ function ProgressGauge({
             }}
           />
           <VStack
-            frame={{ width: rpt(42), height: rpt(42) }}
+            frame={{ width: rpt(34), height: rpt(34) }}
             spacing={0}
             background={{
               shape: 'circle',
@@ -127,7 +127,7 @@ function ProgressGauge({
               {title}
             </Text>
             <Text
-              font={rpt(11)}
+              font={rpt(10)}
               fontDesign="rounded"
               fontWeight="bold"
               foregroundStyle="label"
@@ -145,7 +145,7 @@ function ProgressGauge({
                   widgetRenderingMode === 'accented' ? 'rgba(0,0,0,0.5)' : iconColor,
               }}
               foregroundStyle="white"
-              font={rpt(11)}
+              font={rpt(10)}
             />
           </VStack>
         </ZStack>
@@ -158,17 +158,17 @@ function WidgetView({ data }: { data: WidgetData }) {
   const { fee, flow, voice, point } = data
   return (
     <VStack
-      padding={rpt(16)}
+      padding={rpt(20)}
       frame={Widget.displaySize}
       modifiers={modifiers().widgetBackground('systemBackground')}
-      spacing={rpt(10)}
+      spacing={rpt(12)}
     >
-      {/* 间距问题：之前每行放了 3 个 Spacer，Spacer 在 Scripting 里不会均分，
-          两边的被压扁、中间的被撑大，所以左右贴边、中间空一大块。
-          改成固定间距 + 整行居中，左右和中间的空隙就一样了；
-          圆环也从 58 缩到 48，上下不再贴边 */}
-      <VStack spacing={rpt(10)} alignment="center">
-        <HStack spacing={rpt(32)}>
+      {/* 图形太贴边：圆环再缩到 40，外边距加到 20，上下各加一个 Spacer
+          把整组圆环顶在中间，上面不再贴边，下面和底行的空隙也匀了；
+          列间距 32→28，两边留白更多 */}
+      <Spacer />
+      <VStack spacing={rpt(14)} alignment="center">
+        <HStack spacing={rpt(28)}>
           <ProgressGauge
             title={fee.title}
             value={`${fee.number}${fee.unit}`}
@@ -184,7 +184,7 @@ function WidgetView({ data }: { data: WidgetData }) {
             progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
           />
         </HStack>
-        <HStack spacing={rpt(32)}>
+        <HStack spacing={rpt(28)}>
           <ProgressGauge
             title={voice.title}
             value={`${voice.number}${voice.unit}`}
@@ -202,9 +202,10 @@ function WidgetView({ data }: { data: WidgetData }) {
         </HStack>
       </VStack>
       <Spacer />
-      {/* 底行之前左右拉满，中间一大段空白，看着散；
-          改成居中一行：红字品牌 + 更新时间，中间用 · 隔开 */}
-      <HStack alignment="center" spacing={rpt(6)}>
+      {/* 底行放中间：左右各加一个 Spacer 才能真正居中，
+          光写 alignment="center" 在 Scripting 里只管竖直方向，不管水平 */}
+      <HStack spacing={rpt(6)}>
+        <Spacer />
         <Text
           foregroundStyle="rgba(230,0,39,1)"
           font={rpt(11)}
@@ -220,6 +221,7 @@ function WidgetView({ data }: { data: WidgetData }) {
           {data.fromCache ? '缓存 ' : ''}
           {data.updatedAt} 更新
         </Text>
+        <Spacer />
       </HStack>
     </VStack>
   )
