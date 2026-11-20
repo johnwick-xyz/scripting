@@ -181,11 +181,6 @@ function WidgetView({ data }: { data: WidgetData }) {
             </Text>
           </Text>
         </VStack>
-        <Spacer />
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
-          {data.fromCache ? '缓存 ' : ''}
-          {data.updatedAt}
-        </Text>
       </HStack>
       <HStack spacing={rpt(15)}>
         <ProgressGauge
@@ -203,9 +198,16 @@ function WidgetView({ data }: { data: WidgetData }) {
           progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
         />
       </HStack>
-      <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
-        {point ? `${point.title}：${point.number}` : data.error ? data.error : '中国联通'}
-      </Text>
+      <HStack>
+        <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
+          {point ? `${point.title}：${point.number}` : data.error ? data.error : '中国联通'}
+        </Text>
+        <Spacer />
+        <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
+          {data.fromCache ? '缓存 ' : ''}
+          {data.updatedAt}
+        </Text>
+      </HStack>
     </VStack>
   )
 }
