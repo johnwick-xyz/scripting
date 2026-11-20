@@ -25,6 +25,26 @@ import { rpt } from './utils'
 const API_URL =
   'https://m.client.10010.com/mobileserviceimportant/home/queryUserInfoSeven?version=iphone_c@8.0200&desmobiel=&showType=0'
 const BOXJS_URL = 'https://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie'
+// Loon 抓 Cookie 用的 key 是 'unicom_cookie'，和上面 anker 用的
+// @ChinaUnicom.10010v4.cookie 不是同一个 key，必须两个都查，
+// 否则 Loon 弹“已抓取”，小组件却报没拿到数据。
+// 顺序：先查原版 @… key（兼容已存那边的用户），再查 unicom_cookie。
+// BoxJs 是本机服务，通常走 http，所以 unicom_cookie 那条用 http。
+const BOXJS_URLS = [
+  BOXJS_URL,
+  'http://boxjs.com/query/data/@ChinaUnicom.10010v4.cookie',
+  'http://boxjs.com/query/data/unicom_cookie',
+]
+
+async function getBoxJsCookie(url: string): Promise<string> {
+  try {
+    const res = await fetch(url).then((r) => r.json())
+    const v = res && (res.val || res.data || res.value)
+    if (typeof v === 'string' && v.trim()) return cleanCookie(v)
+    if (typeof res === 'string' && res.trim()) return cleanCookie(res)
+  } catch (e) {}
+  return ''
+}
 
 interface WidgetData {
   fee: { number: string; unit: string; title: string }
@@ -216,11 +236,11 @@ async function getCookie(): Promise<string> {
       if (pref.cookie) return cleanCookie(pref.cookie)
     }
   } catch (e) {}
-  // 2. BoxJs（Loon 抓到的 Cookie）
-  try {
-    const res = await fetch(BOXJS_URL).then((r) => r.json())
-    if (res && res.val) return cleanCookie(res.val)
-  } catch (e) {}
+  // 2. BoxJs（Loon 抓到的 Cookie），两个 key 都查
+  for (const url of BOXJS_URLS) {
+    const v = await getBoxJsCookie(url)
+    if (v) return v
+  }
   return ''
 }
 
