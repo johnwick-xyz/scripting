@@ -162,31 +162,17 @@ function WidgetView({ data }: { data: WidgetData }) {
       frame={Widget.displaySize}
       modifiers={modifiers().widgetBackground('systemBackground')}
     >
-      <HStack alignment="top">
-        <VStack alignment="leading">
-          <Text foregroundStyle="secondaryLabel" fontWeight="medium" font={rpt(12)}>
-            {fee.title}
-          </Text>
-          {/* 之前把单位 <Text> 嵌在数字 <Text> 里，Scripting 会把它当对象渲染成
-              "[object Object]"，所以数字和单位必须拆成两个并排的 Text */}
-          <HStack alignment="bottom" spacing={rpt(4)}>
-            <Text
-              font={rpt(24)}
-              fontDesign="rounded"
-              fontWeight="bold"
-              foregroundStyle="label"
-              lineLimit={1}
-              minScaleFactor={0.5}
-            >
-              {fee.number}
-            </Text>
-            <Text font={rpt(12)} foregroundStyle="secondaryLabel" lineLimit={1}>
-              {fee.unit}
-            </Text>
-          </HStack>
-        </VStack>
-      </HStack>
+      {/* 四个都是圆环：话费和积分没有总额算不出剩余比例，圆环画满，只做展示 */}
       <HStack spacing={rpt(15)}>
+        <Spacer />
+        <ProgressGauge
+          title={fee.title}
+          value={`${fee.number}${fee.unit}`}
+          icon="banknote.fill"
+          color={{ r: 248, g: 101, b: 39 }}
+          progress={1}
+        />
+        <Spacer />
         <ProgressGauge
           title={flow.title}
           value={`${flow.number}${flow.unit}`}
@@ -194,6 +180,10 @@ function WidgetView({ data }: { data: WidgetData }) {
           color={{ r: 59, g: 201, b: 236 }}
           progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
         />
+        <Spacer />
+      </HStack>
+      <HStack spacing={rpt(15)}>
+        <Spacer />
         <ProgressGauge
           title={voice.title}
           value={`${voice.number}${voice.unit}`}
@@ -201,10 +191,19 @@ function WidgetView({ data }: { data: WidgetData }) {
           color={{ r: 162, g: 207, b: 57 }}
           progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
         />
+        <Spacer />
+        <ProgressGauge
+          title={point ? point.title : '可用积分'}
+          value={point ? point.number : '—'}
+          icon="star.fill"
+          color={{ r: 168, g: 130, b: 255 }}
+          progress={1}
+        />
+        <Spacer />
       </HStack>
       <HStack>
         <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
-          {point ? `${point.title}：${point.number}` : data.error ? data.error : '中国联通'}
+          中国联通
         </Text>
         <Spacer />
         <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
