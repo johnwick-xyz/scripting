@@ -1,4 +1,5 @@
 import {
+  Capsule,
   Circle,
   Color,
   EnvironmentValuesReader,
@@ -161,25 +162,137 @@ function ProgressGauge({
   )
 }
 
+// 样式改成 john 截图那种列表式（2026-11-20 16:46）：
+//   顶行：联通 logo + 中国联通 + 绿点，右上角刷新图标
+//   话费余额：大号红色数字 + 元
+//   剩余流量 / 剩余通话：每行左边标签、右边数值，
+//     下面一条绿色进度条，条的右端是百分比
+//   底行：可用积分（橙色数字）+ 已用流量
+// 进度条用 Capsule 画：灰底条 + 绿色前景条，宽度按
+// Widget.displaySize 的宽现算（纯数字，不是 JSX 数组，
+// 之前圆环消失是 JSX 数组的问题，不是现算宽度的问题）。
+// 已用流量 = 剩余流量 x 已用% / 剩余%，从 remainPct 算。
+function BarRow({
+  label,
+  value,
+  pct,
+  barW,
+  compact,
+}: {
+  label: string
+  value: string
+  pct: number | null
+  barW: number
+  compact?: boolean
+}) {
+  const p = pct != null ? Math.max(0, Math.min(100, pct)) : 0
+  const pctW = compact ? 32 : 38
+  const barWidth = Math.max(40, barW - pctW - 8)
+  const labelFont = compact ? 12 : 13
+  const pctFont = compact ? 11 : 12
+  const barH = compact ? 6 : 7
+  return (
+    <VStack spacing={compact ? 3 : 4}>
+      <HStack>
+        <Text font={labelFont} foregroundStyle="secondaryLabel">
+          {label}
+        </Text>
+        <Spacer />
+        <Text font={labelFont} fontWeight="semibold" foregroundStyle="label" lineLimit={1}>
+          {value}
+        </Text>
+      </HStack>
+      <HStack spacing={8}>
+        <ZStack alignment="leading">
+          <Capsule frame={{ width: barWidth, height: barH }} fill="rgba(0,0,0,0.08)" />
+          <Capsule
+            frame={{ width: Math.max(barH, (barWidth * p) / 100), height: barH }}
+            fill="rgba(34,197,94,1)"
+          />
+        </ZStack>
+        <Text
+          font={pctFont}
+          foregroundStyle="secondaryLabel"
+          lineLimit={1}
+          frame={{ width: pctW }}
+        >
+          {pct != null ? `${Math.round(p)}%` : '—'}
+        </Text>
+      </HStack>
+    </VStack>
+  )
+}
+
+function Header({ compact }: { compact?: boolean }) {
+  return (
+    <HStack spacing={8}>
+      <Text
+        font={compact ? 12 : 14}
+        fontWeight="bold"
+        foregroundStyle="white"
+        padding={compact ? 5 : 6}
+        background={{ shape: 'circle', style: 'rgba(230,0,39,1)' }}
+      >
+        联
+      </Text>
+      <Text font={compact ? 14 : 16} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
+        中国联通
+      </Text>
+      <Text font={10} foregroundStyle="rgba(34,197,94,1)">
+        ●
+      </Text>
+      <Spacer />
+      <Image
+        systemName="arrow.clockwise"
+        font={12}
+        foregroundStyle="secondaryLabel"
+        padding={6}
+        background={{ shape: 'circle', style: 'rgba(0,0,0,0.06)' }}
+      />
+    </HStack>
+  )
+}
+
+function Balance({ fee, big }: { fee: { number: string; unit: string }; big: number }) {
+  return (
+    <VStack spacing={2} alignment="leading">
+      <Text font={13} foregroundStyle="secondaryLabel">
+        话费余额
+      </Text>
+      <HStack spacing={4}>
+        <Text font={big} fontWeight="bold" foregroundStyle="rgba(230,0,39,1)" lineLimit={1} minScaleFactor={0.5}>
+          {fee.number}
+        </Text>
+        <Text font={14} foregroundStyle="secondaryLabel">
+          {fee.unit || '元'}
+        </Text>
+      </HStack>
+    </VStack>
+  )
+}
+
+function Footer({ point, usedFlow }: { point: { number: string } | null; usedFlow: string | null }) {
+  return (
+    <HStack spacing={4}>
+      <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>
+        可用积分
+      </Text>
+      <Text font={14} fontWeight="bold" foregroundStyle="rgba(248,101,39,1)" lineLimit={1}>
+        {point ? point.number : '—'}
+      </Text>
+      <Spacer />
+      <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>
+        已用流量
+      </Text>
+      <Text font={14} fontWeight="bold" foregroundStyle="label" lineLimit={1} minScaleFactor={0.5}>
+        {usedFlow || '—'}
+      </Text>
+    </HStack>
+  )
+}
+
 function WidgetView({ data }: { data: WidgetData }) {
   const { fee, flow, voice, point } = data
-  // 规格确认自 Scripting 官方文档 Honye/scripting-scripts
-  // documentation/widget_api/en.md：
-  //   Widget.family = "systemSmall" | "systemMedium" | "systemLarge"
-  //     | "accessoryRectangular" | "accessoryCircular"
-  //     （另有 iPad 的 systemExtraLarge）
-  //   Widget.displaySize = {width, height}（单位 pt，随机型变，
-  //     文档里没有固定数字）
-  // Apple HIG 的 iPhone 尺寸（pt）：
-  //   375x812 机型：小 155x155，中 329x155，大 329x345
-  //   430x932 机型：小 170x170，中 364x170，大 364x382
-  //   393x852 机型：小 158x158，中 338x158，大 338x354
-  //   锁屏：圆形 72x72，矩形 157x72
-  // 所以按 family 分支（displaySize 只做兜底），不再只看宽高比。
-  // rpt 是按最短边算的（utils.tsx：rpt(n)=n*min(W,H)/155）：
-  //   小 / 中最短边都是 155~170，rpt 值≈原值；
-  //   大最短边是 329~364，rpt 值≈原值 x 2.1~2.3。
-  // 圆环 rpt 基数：中号 52，大号 48，小号 36。
   const family = String((Widget as any).family || '')
   const { width: W, height: H } = Widget.displaySize
   const isMedium = family.includes('Medium') || family === 'medium'
@@ -222,104 +335,89 @@ function WidgetView({ data }: { data: WidgetData }) {
       </VStack>
     )
   }
-  const isWide = isMedium || isExtraLarge || (!family && W > H * 1.4)
-  // 要饱满：圆环放到能放的最大尺寸，同时收紧边距和间距，
-  // 文字字号按 s 算，跟着一起变大。
-  // 中号：4 个环一排，s=68 时宽 4*68+3*10=302，刚好塞进 329；
-  // 大号：s=64 时环约 136pt，2 个宽 2*136+20=292，塞进 329；
-  // 小号 s=36 不动。
-  const ringS = isWide ? 68 : isLarge ? 64 : isSmall ? 36 : W >= 300 ? 64 : 36
-  const feeGauge = (
-    <ProgressGauge
-      title={fee.title}
-      value={`${fee.number}${fee.unit}`}
-      icon="banknote.fill"
-      color={{ r: 248, g: 101, b: 39 }}
-      progress={1}
-      s={ringS}
-    />
-  )
-  const flowGauge = (
-    <ProgressGauge
-      title={flow.title}
+  // 已用流量：剩余 x 已用% / 剩余%
+  const remainNum = parseFloat(flow.number)
+  const usedFlow =
+    flow.remainPct != null && flow.remainPct > 0 && flow.remainPct < 100 && !isNaN(remainNum)
+      ? `${((remainNum * (100 - flow.remainPct)) / flow.remainPct).toFixed(2)}${flow.unit || 'GB'}`
+      : null
+  const flowBar = (
+    <BarRow
+      label="剩余流量"
       value={`${flow.number}${flow.unit}`}
-      icon="antenna.radiowaves.left.and.right"
-      color={{ r: 59, g: 201, b: 236 }}
-      progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
-      s={ringS}
+      pct={flow.remainPct}
+      barW={W - 36}
     />
   )
-  const voiceGauge = (
-    <ProgressGauge
-      title={voice.title}
+  const voiceBar = (
+    <BarRow
+      label="剩余通话"
       value={`${voice.number}${voice.unit}`}
-      icon="phone"
-      color={{ r: 162, g: 207, b: 57 }}
-      progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
-      s={ringS}
+      pct={voice.remainPct}
+      barW={W - 36}
     />
   )
-  const pointGauge = (
-    <ProgressGauge
-      title={point ? point.title : '可用积分'}
-      value={point ? point.number : '—'}
-      icon="star.fill"
-      color={{ r: 168, g: 130, b: 255 }}
-      progress={1}
-      s={ringS}
-    />
-  )
-  return (
+  // 大号：内容要在 345pt 里均匀铺满，不能只在顶部堆一坨、
+  // 中间空一大块再到底行。把一个 Spacer 换成每段之间
+  // 各一个 Spacer，空余平均分开；同时字号 / 条高放大。
+  const body = (
     <VStack
-      padding={rpt(12)}
+      padding={20}
       frame={Widget.displaySize}
       modifiers={modifiers().widgetBackground('systemBackground')}
-      spacing={rpt(8)}
+      spacing={8}
+      alignment="leading"
     >
+      <Header />
       <Spacer />
-      {isWide ? (
-        <HStack spacing={rpt(10)} alignment="center">
-          {feeGauge}
-          {flowGauge}
-          {voiceGauge}
-          {pointGauge}
-        </HStack>
-      ) : (
-        <VStack spacing={rpt(10)} alignment="center">
-          <HStack spacing={rpt(20)}>
-            {feeGauge}
-            {flowGauge}
-          </HStack>
-          <HStack spacing={rpt(20)}>
-            {voiceGauge}
-            {pointGauge}
-          </HStack>
-        </VStack>
-      )}
+      <Balance fee={fee} big={44} />
       <Spacer />
-      {/* 底行放中间：左右各加一个 Spacer 才能真正居中，
-          光写 alignment="center" 在 Scripting 里只管竖直方向，不管水平 */}
-      <HStack spacing={rpt(6)}>
-        <Spacer />
-        <Text
-          foregroundStyle="rgba(230,0,39,1)"
-          font={rpt(11)}
-          fontWeight="bold"
-          lineLimit={1}
-        >
-          中国联通
-        </Text>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1}>
-          ·
-        </Text>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
-          {data.fromCache ? '缓存 ' : ''}
-          {data.updatedAt} 更新
-        </Text>
-        <Spacer />
-      </HStack>
+      {flowBar}
+      <Spacer />
+      {voiceBar}
+      <Spacer />
+      <Footer point={point} usedFlow={usedFlow} />
+      <Text font={11} foregroundStyle="secondaryLabel" lineLimit={1}>
+        {data.fromCache ? '缓存 ' : ''}
+        {data.updatedAt} 更新
+      </Text>
     </VStack>
   )
+  // 中号（329x155）和小号（155x155）：高都只有 155pt，
+  // 不能再用两栏 / 截断，改成和截图一样的竖排列表，
+  // 只是字号和间距收紧：头 12pt、余额 24pt、条高 6pt。
+  // 顺序和大号完全一致：头、话费、流量条、通话条、底行。
+  if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
+    return (
+      <VStack
+        padding={12}
+        frame={Widget.displaySize}
+        modifiers={modifiers().widgetBackground('systemBackground')}
+        spacing={6}
+        alignment="leading"
+      >
+        <Header compact />
+        <Balance fee={fee} big={24} />
+        <BarRow
+          label="剩余流量"
+          value={`${flow.number}${flow.unit}`}
+          pct={flow.remainPct}
+          barW={W - 24}
+          compact
+        />
+        <BarRow
+          label="剩余通话"
+          value={`${voice.number}${voice.unit}`}
+          pct={voice.remainPct}
+          barW={W - 24}
+          compact
+        />
+        <Spacer />
+        <Footer point={point} usedFlow={usedFlow} />
+      </VStack>
+    )
+  }
+  return body
 }
 
 function ErrorView({ message }: { message: string }) {
