@@ -189,11 +189,11 @@ function BarRow({
   const p = pct != null ? Math.max(0, Math.min(100, pct)) : 0
   const pctW = compact ? 32 : 38
   const barWidth = Math.max(40, barW - pctW - 8)
-  const labelFont = compact ? 12 : 13
-  const pctFont = compact ? 11 : 12
-  const barH = compact ? 6 : 7
+  const labelFont = compact ? 11 : 13
+  const pctFont = compact ? 10 : 12
+  const barH = compact ? 5 : 7
   return (
-    <VStack spacing={compact ? 3 : 4}>
+    <VStack spacing={compact ? 2 : 4}>
       <HStack>
         <Text font={labelFont} foregroundStyle="secondaryLabel">
           {label}
@@ -230,15 +230,15 @@ function Header({ compact }: { compact?: boolean }) {
   return (
     <HStack spacing={8}>
       <Text
-        font={compact ? 12 : 14}
+        font={compact ? 11 : 14}
         fontWeight="bold"
         foregroundStyle="white"
-        padding={compact ? 5 : 6}
+        padding={compact ? 3 : 6}
         background={{ shape: 'circle', style: 'rgba(230,0,39,1)' }}
       >
         联
       </Text>
-      <Text font={compact ? 14 : 16} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
+      <Text font={compact ? 12 : 16} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
         中国联通
       </Text>
       <Text font={10} foregroundStyle="rgba(34,197,94,1)">
@@ -247,26 +247,34 @@ function Header({ compact }: { compact?: boolean }) {
       <Spacer />
       <Image
         systemName="arrow.clockwise"
-        font={12}
+        font={compact ? 10 : 12}
         foregroundStyle="secondaryLabel"
-        padding={6}
+        padding={compact ? 4 : 6}
         background={{ shape: 'circle', style: 'rgba(0,0,0,0.06)' }}
       />
     </HStack>
   )
 }
 
-function Balance({ fee, big }: { fee: { number: string; unit: string }; big: number }) {
+function Balance({
+  fee,
+  big,
+  compact,
+}: {
+  fee: { number: string; unit: string }
+  big: number
+  compact?: boolean
+}) {
   return (
     <VStack spacing={2} alignment="leading">
-      <Text font={13} foregroundStyle="secondaryLabel">
+      <Text font={compact ? 11 : 13} foregroundStyle="secondaryLabel">
         话费余额
       </Text>
       <HStack spacing={4}>
         <Text font={big} fontWeight="bold" foregroundStyle="rgba(230,0,39,1)" lineLimit={1} minScaleFactor={0.5}>
           {fee.number}
         </Text>
-        <Text font={14} foregroundStyle="secondaryLabel">
+        <Text font={compact ? 12 : 14} foregroundStyle="secondaryLabel">
           {fee.unit || '元'}
         </Text>
       </HStack>
@@ -274,20 +282,30 @@ function Balance({ fee, big }: { fee: { number: string; unit: string }; big: num
   )
 }
 
-function Footer({ point, usedFlow }: { point: { number: string } | null; usedFlow: string | null }) {
+function Footer({
+  point,
+  usedFlow,
+  compact,
+}: {
+  point: { number: string } | null
+  usedFlow: string | null
+  compact?: boolean
+}) {
+  const f = compact ? 11 : 13
+  const n = compact ? 12 : 14
   return (
     <HStack spacing={4}>
-      <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>
-        可用积分
+      <Text font={f} foregroundStyle="secondaryLabel" lineLimit={1}>
+        {compact ? '积分' : '可用积分'}
       </Text>
-      <Text font={14} fontWeight="bold" foregroundStyle="rgba(248,101,39,1)" lineLimit={1}>
+      <Text font={n} fontWeight="bold" foregroundStyle="rgba(248,101,39,1)" lineLimit={1}>
         {point ? point.number : '—'}
       </Text>
       <Spacer />
-      <Text font={13} foregroundStyle="secondaryLabel" lineLimit={1}>
-        已用流量
+      <Text font={f} foregroundStyle="secondaryLabel" lineLimit={1}>
+        {compact ? '已用' : '已用流量'}
       </Text>
-      <Text font={14} fontWeight="bold" foregroundStyle="label" lineLimit={1} minScaleFactor={0.5}>
+      <Text font={n} fontWeight="bold" foregroundStyle="label" lineLimit={1} minScaleFactor={0.5}>
         {usedFlow || '—'}
       </Text>
     </HStack>
@@ -304,7 +322,9 @@ function WidgetView({ data }: { data: WidgetData }) {
   const isCircular = family.includes('Circular')
   const isRectangular = family.includes('Rectangular')
   const isExtraLarge = family.includes('ExtraLarge')
-  // 锁屏圆形（72x72）：只显示剩余流量百分比一个环
+  // 锁屏圆形（72x72）：只显示剩余流量百分比一个环。
+  // 注意 rpt 是按最短边 155pt 换算的，直接传 s=36 在 72pt 盒子
+  // 里只有约 17pt 大；要占满盒子（直径约 60pt）得传 s=128。
   if (isCircular) {
     const pct = flow.remainPct != null ? Math.round(flow.remainPct) : 0
     return (
@@ -314,24 +334,26 @@ function WidgetView({ data }: { data: WidgetData }) {
         icon="antenna.radiowaves.left.and.right"
         color={{ r: 59, g: 201, b: 236 }}
         progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
-        s={36}
+        s={128}
       />
     )
   }
-  // 锁屏矩形（157x72）：只显示话费和流量两行字
+  // 锁屏矩形（157x72）：只显示话费和流量两行字。
+  // 注意：不能用 rpt，rpt(12) 在 72pt 高的盒子里只有约 5.6pt，
+  // 改成固定字号 13/12。
   if (isRectangular) {
     return (
       <VStack
-        padding={rpt(10)}
+        padding={8}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
-        spacing={rpt(4)}
+        spacing={4}
       >
-        <Text font={rpt(12)} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
+        <Text font={13} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
           {fee.title} {fee.number}
           {fee.unit}
         </Text>
-        <Text font={rpt(12)} foregroundStyle="secondaryLabel" lineLimit={1}>
+        <Text font={12} foregroundStyle="secondaryLabel" lineLimit={1}>
           {flow.title} {flow.number}
           {flow.unit}
         </Text>
@@ -390,19 +412,20 @@ function WidgetView({ data }: { data: WidgetData }) {
   )
   // 中号（329x155）和小号（155x155）：高都只有 155pt，
   // 不能再用两栏 / 截断，改成和截图一样的竖排列表，
-  // 只是字号和间距收紧：头 12pt、余额 24pt、条高 6pt。
+  // 只是字号和间距收紧：头 11pt、余额 18pt、条高 5pt、
+  // 边距 6、间距 2，底行短标签（小号 155pt 宽放不下全称）。
   // 顺序和大号完全一致：头、话费、流量条、通话条、底行。
   if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
     return (
       <VStack
-        padding={8}
+        padding={6}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
-        spacing={4}
+        spacing={2}
         alignment="leading"
       >
         <Header compact />
-        <Balance fee={fee} big={20} />
+        <Balance fee={fee} big={18} compact />
         <BarRow
           label="剩余流量"
           value={`${flow.number}${flow.unit}`}
@@ -418,7 +441,7 @@ function WidgetView({ data }: { data: WidgetData }) {
           compact
         />
         <Spacer />
-        <Footer point={point} usedFlow={usedFlow} />
+        <Footer point={point} usedFlow={usedFlow} compact />
       </VStack>
     )
   }
