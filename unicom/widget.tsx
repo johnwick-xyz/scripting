@@ -167,19 +167,23 @@ function WidgetView({ data }: { data: WidgetData }) {
           <Text foregroundStyle="secondaryLabel" fontWeight="medium" font={rpt(12)}>
             {fee.title}
           </Text>
-          <Text
-            font={rpt(24)}
-            fontDesign="rounded"
-            fontWeight="bold"
-            foregroundStyle="label"
-            lineLimit={1}
-            minScaleFactor={0.5}
-          >
-            {fee.number}
-            <Text font={rpt(12)} foregroundStyle="secondaryLabel">
-              {' ' + fee.unit}
+          {/* 之前把单位 <Text> 嵌在数字 <Text> 里，Scripting 会把它当对象渲染成
+              "[object Object]"，所以数字和单位必须拆成两个并排的 Text */}
+          <HStack alignment="bottom" spacing={rpt(4)}>
+            <Text
+              font={rpt(24)}
+              fontDesign="rounded"
+              fontWeight="bold"
+              foregroundStyle="label"
+              lineLimit={1}
+              minScaleFactor={0.5}
+            >
+              {fee.number}
             </Text>
-          </Text>
+            <Text font={rpt(12)} foregroundStyle="secondaryLabel" lineLimit={1}>
+              {fee.unit}
+            </Text>
+          </HStack>
         </VStack>
       </HStack>
       <HStack spacing={rpt(15)}>
@@ -199,11 +203,11 @@ function WidgetView({ data }: { data: WidgetData }) {
         />
       </HStack>
       <HStack>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
+        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
           {point ? `${point.title}：${point.number}` : data.error ? data.error : '中国联通'}
         </Text>
         <Spacer />
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)}>
+        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
           {data.fromCache ? '缓存 ' : ''}
           {data.updatedAt}
         </Text>
@@ -258,7 +262,11 @@ async function fetchData(cookie: string): Promise<WidgetData> {
     flow: { number: '—', unit: '', title: '剩余流量', remainPct: null },
     voice: { number: '—', unit: '分钟', title: '语音剩余', remainPct: null },
     point: null,
-    updatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+    updatedAt: (() => {
+      const d = new Date()
+      const p = (n: number) => (n < 10 ? '0' + n : '' + n)
+      return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`
+    })(),
     fromCache: false,
     error: '',
   }
