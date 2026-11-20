@@ -1,9 +1,7 @@
 import {
   Circle,
   Color,
-  EnvironmentValuesReader,
   HStack,
-  Image,
   Spacer,
   Text,
   VStack,
@@ -67,140 +65,267 @@ function cleanCookie(str: string) {
     .join('; ')
 }
 
+// 自适应：按 Widget.family 分尺寸，不再按 displaySize 宽高比现算圆环。
+// 上一版按 displaySize 现算圆环尺寸，结果圆环直接消失了
+// （只剩小圆点和数字），所以圆环尺寸回到经过验证的 rpt 写法。
+// 尺寸显示策略（Apple HIG iPhone pt）：
+//   小号 155x155：只放一个最大的剩余流量圆环（核心指标）
+//   中号 329x155：横排 话费/流量/语音 三个精简圆环
+//   大号 329x345：2x2 四个圆环全显示，字号更大
+// rpt 是按最短边算的（utils.tsx：rpt(n)=n*min(W,H)/155）：
+//   小 / 中最短边都是 155~170，rpt 值≈原值；
+//   大最短边是 329~364，rpt 值≈原值 x 2.1~2.3。
 function ProgressGauge({
   title,
   value,
-  icon,
+  badge,
   color,
   progress,
+  s = 36,
 }: {
   title: string
   value: string | number
-  icon: string
+  badge?: string
   color: { r: number; g: number; b: number }
   progress: number
+  s?: number
 }) {
-  const trimTo = 0.15 + 0.7 * Math.max(0, Math.min(1, progress))
-  const iconColor: Color = `rgba(${color.r},${color.g},${color.b},1)`
-  const colorStart: Color = `rgba(${color.r},${color.g},${color.b},0.4)`
-  const bgColor: Color = `rgba(${color.r},${color.g},${color.b},0.1)`
-  const bgStart: Color = `rgba(${color.r},${color.g},${color.b},0.2)`
+  // 目标样式：缺口在正下方、约 60°（每端 30° = 0.083 圈）。
+  // Circle 的 trim 起点在 3 点方向顺时针，rotationEffect=90 后缺口落到正下方。
+  const GAP = 0.083 // 缺口半宽（圈数）：0.083*360≈30°，两端共 60°
+  const FULL = 1 - 2 * GAP // 可画弧长 0.834
+  const trimTo = GAP + FULL * Math.max(0, Math.min(1, progress))
+  const ringColor: Color = `rgba(${color.r},${color.g},${color.b},1)`
+  const colorStart: Color = `rgba(${color.r},${color.g},${color.b},0.55)`
+  // 底环用彩色浅色（看得见），不是灰色、也不是近乎透明
+  const bgColor: Color = `rgba(${color.r},${color.g},${color.b},0.18)`
+  const bgStart: Color = `rgba(${color.r},${color.g},${color.b},0.28)`
   return (
-    <EnvironmentValuesReader keys={['widgetRenderingMode']}>
-      {({ widgetRenderingMode }) => (
-        <ZStack>
-          <Circle
-            frame={{ width: rpt(40), height: rpt(40) }}
-            trim={{ from: 0.15, to: 0.85 }}
-            rotationEffect={90}
-            stroke={{
-              shapeStyle: bgColor,
-              strokeStyle: { lineWidth: rpt(3), lineCap: 'round' },
-            }}
-          />
-          <Circle
-            trim={{ from: 0.15, to: trimTo }}
-            rotationEffect={90}
-            stroke={{
-              shapeStyle: {
-                colors: [colorStart, iconColor],
-                startPoint: 'leading',
-                endPoint: 'trailing',
-              },
-              strokeStyle: { lineWidth: rpt(3), lineCap: 'round' },
-            }}
-          />
-          <VStack
-            frame={{ width: rpt(34), height: rpt(34) }}
-            spacing={0}
-            background={{
-              shape: 'circle',
-              style: {
-                colors: [bgStart, 'clear'],
-                startPoint: 'top',
-                endPoint: 'bottom',
-              },
-            }}
+    <ZStack>
+      {/* 底环：与目标进度环同样的 60° 缺口，只是颜色浅 */}
+      <Circle
+        frame={{ width: rpt(s), height: rpt(s) }}
+        trim={{ from: GAP, to: 1 - GAP }}
+        rotationEffect={90}
+        stroke={{
+          shapeStyle: {
+            colors: [bgColor, bgStart, bgColor],
+            startPoint: 'leading',
+            endPoint: 'trailing',
+          },
+          strokeStyle: { lineWidth: rpt(s * 0.085), lineCap: 'butt' },
+        }}
+      />
+      {/* 进度环：从缺口左端顺时针画到 trimTo；渐变两端深、中段亮 */}
+      <Circle
+        frame={{ width: rpt(s), height: rpt(s) }}
+        trim={{ from: GAP, to: trimTo }}
+        rotationEffect={90}
+        stroke={{
+          shapeStyle: {
+            colors: [colorStart, ringColor, colorStart],
+            startPoint: 'leading',
+            endPoint: 'trailing',
+          },
+          strokeStyle: { lineWidth: rpt(s * 0.085), lineCap: 'round' },
+        }}
+      />
+      {/* 目标样式：环内三行——标题 / 数值 / 分类小圆标（费·流·话·积）。
+          全部收在环内空白区：环线宽 s*0.08，环内可用直径约 s*0.84，
+          文字框给 s*0.66 留余量；长数值靠 lineLimit=1 + minScaleFactor
+          自动缩小到框内，绝不叠到圆环线上。 */}
+      <VStack
+        frame={{ width: rpt(s * 0.66), height: rpt(s * 0.66) }}
+        alignment="center"
+        spacing={rpt(0.5)}
+        background={{
+          shape: 'circle',
+          style: {
+            colors: [bgStart, 'clear'],
+            startPoint: 'top',
+            endPoint: 'bottom',
+          },
+        }}
+      >
+        <Text
+          font={rpt(s * 0.14)}
+          foregroundStyle="secondaryLabel"
+          fontWeight="medium"
+          lineLimit={1}
+          minScaleFactor={0.4}
+        >
+          {title}
+        </Text>
+        <Text
+          font={rpt(s * 0.19)}
+          fontDesign="rounded"
+          fontWeight="bold"
+          foregroundStyle="label"
+          lineLimit={1}
+          minScaleFactor={0.3}
+        >
+          {value}
+        </Text>
+        {badge ? (
+          <Text
+            font={rpt(s * 0.11)}
+            fontWeight="bold"
+            foregroundStyle="white"
+            padding={rpt(2)}
+            background={{ shape: 'circle', style: ringColor }}
           >
-            <Spacer />
-            <Text font={rpt(7)} foregroundStyle="secondaryLabel" fontWeight="medium">
-              {title}
-            </Text>
-            <Text
-              font={rpt(10)}
-              fontDesign="rounded"
-              fontWeight="bold"
-              foregroundStyle="label"
-              lineLimit={1}
-              minScaleFactor={0.5}
-            >
-              {value}
-            </Text>
-            <Image
-              systemName={icon}
-              padding={rpt(2)}
-              background={{
-                shape: 'circle',
-                style:
-                  widgetRenderingMode === 'accented' ? 'rgba(0,0,0,0.5)' : iconColor,
-              }}
-              foregroundStyle="white"
-              font={rpt(10)}
-            />
-          </VStack>
-        </ZStack>
-      )}
-    </EnvironmentValuesReader>
+            {badge}
+          </Text>
+        ) : null}
+      </VStack>
+    </ZStack>
   )
 }
 
 function WidgetView({ data }: { data: WidgetData }) {
   const { fee, flow, voice, point } = data
-  return (
-    <VStack
-      padding={rpt(20)}
-      frame={Widget.displaySize}
-      modifiers={modifiers().widgetBackground('systemBackground')}
-      spacing={rpt(12)}
-    >
-      {/* 图形太贴边：圆环再缩到 40，外边距加到 20，上下各加一个 Spacer
-          把整组圆环顶在中间，上面不再贴边，下面和底行的空隙也匀了；
-          列间距 32→28，两边留白更多 */}
-      <Spacer />
-      <VStack spacing={rpt(14)} alignment="center">
-        <HStack spacing={rpt(28)}>
-          <ProgressGauge
-            title={fee.title}
-            value={`${fee.number}${fee.unit}`}
-            icon="banknote.fill"
-            color={{ r: 248, g: 101, b: 39 }}
-            progress={1}
-          />
-          <ProgressGauge
-            title={flow.title}
-            value={`${flow.number}${flow.unit}`}
-            icon="antenna.radiowaves.left.and.right"
-            color={{ r: 59, g: 201, b: 236 }}
-            progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
-          />
+  // 规格确认自 Scripting 官方文档 Honye/scripting-scripts
+  // documentation/widget_api/en.md：
+  //   Widget.family = "systemSmall" | "systemMedium" | "systemLarge"
+  //     | "accessoryRectangular" | "accessoryCircular"
+  //     （另有 iPad 的 systemExtraLarge）
+  //   Widget.displaySize = {width, height}（单位 pt，随机型变，
+  //     文档里没有固定数字）
+  const family = String((Widget as any).family || '')
+  const { width: W, height: H } = Widget.displaySize
+  const isSmall = family.includes('Small') || family === 'small'
+  const isMedium = family.includes('Medium') || family === 'medium'
+  const isLarge = family.includes('Large') || family === 'large'
+  const isCircular = family.includes('Circular')
+  const isRectangular = family.includes('Rectangular')
+
+  // 锁屏圆形（72x72）：只显示剩余流量百分比一个环
+  if (isCircular) {
+    const pct = flow.remainPct != null ? Math.round(flow.remainPct) : 0
+    return (
+      <ProgressGauge
+        title="流量"
+        value={`${pct}%`}
+        color={{ r: 59, g: 201, b: 236 }}
+        progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
+        s={36}
+      />
+    )
+  }
+  // 锁屏矩形（157x72）：只显示话费和流量两行字
+  if (isRectangular) {
+    return (
+      <VStack
+        padding={rpt(10)}
+        frame={Widget.displaySize}
+        modifiers={modifiers().widgetBackground('systemBackground')}
+        spacing={rpt(4)}
+      >
+        <Text font={rpt(12)} fontWeight="bold" foregroundStyle="label" lineLimit={1}>
+          {fee.title} {fee.number}
+          {fee.unit}
+        </Text>
+        <Text font={rpt(12)} foregroundStyle="secondaryLabel" lineLimit={1}>
+          {flow.title} {flow.number}
+          {flow.unit}
+        </Text>
+      </VStack>
+    )
+  }
+
+  // 各 gauge 实例（按尺寸复用）
+  const feeGauge = (s: number) => (
+    <ProgressGauge
+      title={fee.title}
+      value={`${fee.number}${fee.unit}`}
+      badge="费"
+      color={{ r: 248, g: 101, b: 39 }}
+      progress={1}
+      s={s}
+    />
+  )
+  const flowGauge = (s: number) => (
+    <ProgressGauge
+      title={flow.title}
+      value={`${flow.number}${flow.unit}`}
+      badge="流"
+      color={{ r: 59, g: 201, b: 236 }}
+      progress={flow.remainPct != null ? flow.remainPct / 100 : 0}
+      s={s}
+    />
+  )
+  const voiceGauge = (s: number) => (
+    <ProgressGauge
+      title={voice.title}
+      value={`${voice.number}${voice.unit}`}
+      badge="话"
+      color={{ r: 162, g: 207, b: 57 }}
+      progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
+      s={s}
+    />
+  )
+  const pointGauge = (s: number) => (
+    <ProgressGauge
+      title={point ? point.title : '可用积分'}
+      value={point ? point.number : '—'}
+      badge="积"
+      color={{ r: 168, g: 130, b: 255 }}
+      progress={1}
+      s={s}
+    />
+  )
+
+  // ---------- 主屏幕三号尺寸分化显示 ----------
+  // 目标样式：小号/大号都是四环 2x2，中号横排三项；每环带汉字分类小圆标。
+  let content
+  if (isSmall) {
+    // 小号：四环 2x2，环稍小以塞进 155pt
+    content = (
+      <VStack spacing={rpt(6)} alignment="center">
+        <HStack spacing={rpt(8)} alignment="center">
+          {feeGauge(40)}
+          {flowGauge(40)}
         </HStack>
-        <HStack spacing={rpt(28)}>
-          <ProgressGauge
-            title={voice.title}
-            value={`${voice.number}${voice.unit}`}
-            icon="phone"
-            color={{ r: 162, g: 207, b: 57 }}
-            progress={voice.remainPct != null ? voice.remainPct / 100 : 0}
-          />
-          <ProgressGauge
-            title={point ? point.title : '可用积分'}
-            value={point ? point.number : '—'}
-            icon="star.fill"
-            color={{ r: 168, g: 130, b: 255 }}
-            progress={1}
-          />
+        <HStack spacing={rpt(8)} alignment="center">
+          {voiceGauge(40)}
+          {pointGauge(40)}
         </HStack>
       </VStack>
+    )
+  } else if (isMedium) {
+    // 中号：横排 话费 / 流量 / 语音 三个精简圆环
+    content = (
+      <HStack spacing={rpt(10)} alignment="center">
+        {feeGauge(42)}
+        {flowGauge(42)}
+        {voiceGauge(42)}
+      </HStack>
+    )
+  } else {
+    // 大号：2x2 四个圆环全显示，字号更大
+    content = (
+      <VStack spacing={rpt(16)} alignment="center">
+        <HStack spacing={rpt(26)} alignment="center">
+          {feeGauge(56)}
+          {flowGauge(56)}
+        </HStack>
+        <HStack spacing={rpt(26)} alignment="center">
+          {voiceGauge(56)}
+          {pointGauge(56)}
+        </HStack>
+      </VStack>
+    )
+  }
+
+  return (
+    <VStack
+      padding={rpt(16)}
+      frame={Widget.displaySize}
+      modifiers={modifiers().widgetBackground('systemBackground')}
+      spacing={rpt(10)}
+    >
+      <Spacer />
+      {content}
       <Spacer />
       {/* 底行放中间：左右各加一个 Spacer 才能真正居中，
           光写 alignment="center" 在 Scripting 里只管竖直方向，不管水平 */}
@@ -208,16 +333,16 @@ function WidgetView({ data }: { data: WidgetData }) {
         <Spacer />
         <Text
           foregroundStyle="rgba(230,0,39,1)"
-          font={rpt(11)}
+          font={rpt(10)}
           fontWeight="bold"
           lineLimit={1}
         >
           中国联通
         </Text>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1}>
+        <Text foregroundStyle="secondaryLabel" font={rpt(10)} lineLimit={1}>
           ·
         </Text>
-        <Text foregroundStyle="secondaryLabel" font={rpt(11)} lineLimit={1} minScaleFactor={0.5}>
+        <Text foregroundStyle="secondaryLabel" font={rpt(10)} lineLimit={1} minScaleFactor={0.5}>
           {data.fromCache ? '缓存 ' : ''}
           {data.updatedAt} 更新
         </Text>
