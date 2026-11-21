@@ -62,9 +62,25 @@ const BOXJS_URLS = [
   'http://boxjs.com/query/data/@JD.cookie',
 ]
 
+// 带超时的拉取：p.3.cn 在某些网络上会一直不返回，
+// 之前没加超时，小组件就一直打圈圈，永远到不了
+// Widget.present。每个地址最多等 8 秒，超时就换备用地址，
+// 两个都超时就直接报错 / 显示缓存，不再一直转。
+// 注意：这个函数必须放在 getBoxJsCookie 前面，因为
+// 读 BoxJs 也要走它——上一个版本读 BoxJs 那一步没加超时，
+// BoxJs 没反应时小组件就卡在取 Cookie 那一步，一直转。
+async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
+  return Promise.race([
+    fetch(url, options).then((r) => r.json()),
+    new Promise((_resolve, reject) =>
+      setTimeout(() => reject(new Error('取价超时（8秒没返回）')), ms),
+    ),
+  ])
+}
+
 async function getBoxJsCookie(url: string): Promise<string> {
   try {
-    const res = await fetch(url).then((r) => r.json())
+    const res = await fetchJsonWithTimeout(url, { method: 'GET' }, 3000)
     const v = res && (res.val || res.data || res.value)
     if (typeof v === 'string' && v.trim()) return v.trim()
     if (typeof res === 'string' && res.trim()) return res.trim()
@@ -126,19 +142,6 @@ function saveHistory(list: PriceEntry[]) {
       JSON.stringify(list.slice(-30)),
     )
   } catch (e) {}
-}
-
-// 带超时的拉取：p.3.cn 在某些网络上会一直不返回，
-// 之前没加超时，小组件就一直打圈圈，永远到不了
-// Widget.present。每个地址最多等 8 秒，超时就换备用地址，
-// 两个都超时就直接报错 / 显示缓存，不再一直转。
-async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
-  return Promise.race([
-    fetch(url, options).then((r) => r.json()),
-    new Promise((_resolve, reject) =>
-      setTimeout(() => reject(new Error('取价超时（8秒没返回）')), ms),
-    ),
-  ])
 }
 
 async function fetchPrice(sku: string, cookie: string): Promise<number> {
