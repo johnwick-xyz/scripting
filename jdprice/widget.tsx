@@ -36,8 +36,24 @@ interface WidgetData {
   high: number | null
   history: PriceEntry[]
   updatedAt: string
+  updatedTs?: number
   fromCache: boolean
   error: string
+}
+
+// 更新时间段：9-22 点，每 6 小时一次，
+// 也就是 9:00、15:00、21:00 三个点。
+function nextSlot(now: Date): Date {
+  const slots = [9, 15, 21]
+  for (const h of slots) {
+    const d = new Date(now)
+    d.setHours(h, 0, 0, 0)
+    if (d.getTime() > now.getTime()) return d
+  }
+  const d = new Date(now)
+  d.setDate(d.getDate() + 1)
+  d.setHours(9, 0, 0, 0)
+  return d
 }
 
 function fmt(n: number): string {
@@ -300,6 +316,8 @@ function ErrorView({ message }: { message: string }) {
 }
 
 // 小组件只读本地缓存，不联网、不读 BoxJs，秒出。
+// 告诉系统下次在下一个更新点（9:00 / 15:00 / 21:00）
+// 再重新跑一次小组件。
 ;(async () => {
   try {
     const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
@@ -307,11 +325,14 @@ function ErrorView({ message }: { message: string }) {
     if (FileManager.existsSync(cachePath)) {
       const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
       cached.fromCache = true
-      Widget.present(<WidgetView data={cached} />)
+      Widget.present(<WidgetView data={cached} />, {
+        policy: 'after',
+        date: nextSlot(new Date()),
+      } as any)
       return
     }
   } catch (e) {}
   Widget.present(
-    <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。" />,
+    <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。预览里看到这条的话，点右上角“重新载入”再看一次。" />,
   )
 })()

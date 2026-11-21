@@ -30,6 +30,31 @@ const BOXJS_URLS = [
   'http://boxjs.com/query/data/@JD.cookie',
 ]
 
+// 更新时间段：9-22 点，每 6 小时一次，
+// 也就是 9:00、15:00、21:00 三个点。
+function nextSlot(now: Date): Date {
+  const slots = [9, 15, 21]
+  for (const h of slots) {
+    const d = new Date(now)
+    d.setHours(h, 0, 0, 0)
+    if (d.getTime() > now.getTime()) return d
+  }
+  const d = new Date(now)
+  d.setDate(d.getDate() + 1)
+  d.setHours(9, 0, 0, 0)
+  return d
+}
+
+function fmtSlot(d: Date): string {
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function isUpdateWindow(now: Date): boolean {
+  const h = now.getHours()
+  return h >= 9 && h < 22
+}
+
 // 取价只在 App 里做（小组件里 fetch 一旦没反应就一直转圈）。
 // 这个商品要登录才能看价，带上京东 Cookie 再去拉。
 async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
@@ -102,7 +127,25 @@ function App() {
   const [price, setPrice] = useState<string>('')
   const [status, setStatus] = useState<string>('打开 App 后自动拉价…')
 
-  async function refresh() {
+  // auto=true 是打开 App 时自动拉，manual（点“刷新价格”）永远拉。
+  // 自动拉只在 9-22 点、且上次拉取超过 6 小时才拉。
+  async function refresh(auto = false) {
+    const now0 = new Date()
+    if (auto) {
+      if (!isUpdateWindow(now0)) {
+        setStatus(`不在更新时间（9-22点），下次：${fmtSlot(nextSlot(now0))}`)
+        return
+      }
+      try {
+        if (FileManager.existsSync(cachePath)) {
+          const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
+          if (cached.updatedTs && now0.getTime() - cached.updatedTs < 6 * 3600 * 1000) {
+            setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
+            return
+          }
+        }
+      } catch (e) {}
+    }
     setStatus('正在拉价…')
     try {
       let ck = cookie
@@ -143,6 +186,7 @@ function App() {
         high: prices.length ? Math.max(...prices) : null,
         history: kept,
         updatedAt,
+        updatedTs: now,
         fromCache: false,
         error: '',
       }
@@ -150,7 +194,7 @@ function App() {
       FileManager.writeAsStringSync(cachePath, JSON.stringify(data))
       FileManager.writeAsStringSync(historyPath, JSON.stringify(kept))
       setPrice(p.toFixed(2))
-      setStatus(`已更新：${updatedAt}`)
+      setStatus(`已更新：${updatedAt}，下次：${fmtSlot(nextSlot(new Date()))}`)
       Widget.reloadAll()
     } catch (e) {
       setStatus('拉取失败：' + String(e))
@@ -187,10 +231,10 @@ function App() {
     Widget.reloadAll()
   }, [sku, name, cookie, loaded])
 
-  // 设置加载完后自动拉一次价
+  // 设置加载完后自动拉一次价（按 9-22 点、每 6 小时那个规则）
   useEffect(() => {
     if (!loaded) return
-    refresh()
+    refresh(true)
   }, [loaded])
 
   return (
@@ -228,7 +272,7 @@ function App() {
         </Section>
         <Section header={<Text>说明</Text>}>
           <Text foregroundStyle="secondaryLabel">
-            小组件本身不联网，只读 App 存下来的缓存，所以预览秒出、绝不转圈。想看最新价就打开一次 App，它会自动拉新价并刷新小组件。
+            小组件本身不联网，只读 App 存下来的缓存，所以预览秒出、绝不转圈。自动更新是 9-22 点、每 6 小时一次（9:00、15:00、21:00），打开 App 时按这个规则自动拉；点“刷新价格”随时都能手动拉。预览里如果还是旧的，点右上角“重新载入”再看一次。
           </Text>
         </Section>
         <Section>
