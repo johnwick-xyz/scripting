@@ -137,6 +137,14 @@ function App() {
         return
       }
       try {
+        const cached: any = Storage.get('jd_price_cache', { shared: true })
+        const ts = cached ? (typeof cached === 'string' ? JSON.parse(cached).updatedTs : cached.updatedTs) : null
+        if (ts && now0.getTime() - ts < 6 * 3600 * 1000) {
+          setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
+          return
+        }
+      } catch (e) {}
+      try {
         if (FileManager.existsSync(cachePath)) {
           const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
           if (cached.updatedTs && now0.getTime() - cached.updatedTs < 6 * 3600 * 1000) {
@@ -193,6 +201,10 @@ function App() {
       if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
       FileManager.writeAsStringSync(cachePath, JSON.stringify(data))
       FileManager.writeAsStringSync(historyPath, JSON.stringify(kept))
+      // 跨界面共享：App 和小组件是两次分开的执行，文件传不过去，
+      // 必须写进 Storage 的 shared 域，小组件才能读到。
+      Storage.set('jd_price_cache', data, { shared: true })
+      Storage.set('jd_price_history', kept, { shared: true })
       setPrice(p.toFixed(2))
       setStatus(`已更新：${updatedAt}，下次：${fmtSlot(nextSlot(new Date()))}`)
       Widget.reloadAll()
@@ -279,6 +291,10 @@ function App() {
           <Button
             title="清空价格历史"
             action={() => {
+              try {
+                Storage.remove('jd_price_cache', { shared: true })
+                Storage.remove('jd_price_history', { shared: true })
+              } catch (e) {}
               if (FileManager.existsSync(historyPath)) {
                 FileManager.removeItemSync(historyPath)
               }

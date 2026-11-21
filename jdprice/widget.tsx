@@ -316,22 +316,37 @@ function ErrorView({ message }: { message: string }) {
 }
 
 // 小组件只读本地缓存，不联网、不读 BoxJs，秒出。
-// 告诉系统下次在下一个更新点（9:00 / 15:00 / 21:00）
-// 再重新跑一次小组件。
-;(async () => {
+// 注意：App 和小组件是两次分开的执行，不能靠文件传数据——
+// 上一版就是栽在这儿：App 写的 cache.json，小组件读不到。
+// 官方文档的办法是全局 Storage，shared: true 才是跨界面共享的域，
+// 所以 App 写 Storage，小组件先读 Storage，文件只当备用。
+function readCached(): any | null {
+  try {
+    const v: any = Storage.get('jd_price_cache', { shared: true })
+    if (v) return typeof v === 'string' ? JSON.parse(v) : v
+  } catch (e) {}
   try {
     const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
     const cachePath = Path.join(root, 'cache.json')
     if (FileManager.existsSync(cachePath)) {
-      const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
-      cached.fromCache = true
-      Widget.present(<WidgetView data={cached} />, {
-        policy: 'after',
-        date: nextSlot(new Date()),
-      } as any)
-      return
+      return JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
     }
   } catch (e) {}
+  return null
+}
+
+// 告诉系统下次在下一个更新点（9:00 / 15:00 / 21:00）
+// 再重新跑一次小组件。
+;(async () => {
+  const cached = readCached()
+  if (cached && cached.price != null) {
+    cached.fromCache = true
+    Widget.present(<WidgetView data={cached} />, {
+      policy: 'after',
+      date: nextSlot(new Date()),
+    } as any)
+    return
+  }
   Widget.present(
     <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。预览里看到这条的话，点右上角“重新载入”再看一次。" />,
   )
