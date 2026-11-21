@@ -92,17 +92,30 @@ function saveHistory(list: PriceEntry[]) {
   } catch (e) {}
 }
 
+// 带超时的拉取：p.3.cn 在某些网络上会一直不返回，
+// 之前没加超时，小组件就一直打圈圈，永远到不了
+// Widget.present。每个地址最多等 8 秒，超时就换备用地址，
+// 两个都超时就直接报错 / 显示缓存，不再一直转。
+async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
+  return Promise.race([
+    fetch(url, options).then((r) => r.json()),
+    new Promise((_resolve, reject) =>
+      setTimeout(() => reject(new Error('取价超时（8秒没返回）')), ms),
+    ),
+  ])
+}
+
 async function fetchPrice(sku: string): Promise<number> {
   for (const url of PRICE_URLS(sku)) {
     try {
-      const res: any = await fetch(url, {
+      const res: any = await fetchJsonWithTimeout(url, {
         method: 'GET',
         headers: {
           'User-Agent':
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
           Referer: `https://item.jd.com/${sku}.html`,
         },
-      }).then((r) => r.json())
+      })
       const list = Array.isArray(res) ? res : []
       for (const item of list) {
         if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
