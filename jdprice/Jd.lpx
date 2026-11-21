@@ -1,0 +1,10 @@
+#!name=京东 Cookie 抓取
+#!desc=打开京东 App 后，把 Cookie 写进 BoxJs，供 Scripting 京东价格监控小组件读取
+#!author=MJ
+
+[Script]
+http-request ^https://p\.3\.cn/prices/mgets tag=京东Cookie, script-path=<你的 JdGetCookie.js raw 地址>, requires-body=false
+http-request ^https://item\.m\.jd\.com/product/ tag=京东Cookie, script-path=<你的 JdGetCookie.js raw 地址>, requires-body=false
+
+[MITM]
+hostname = p.3.cn, pm.3.cn, item.m.jd.com

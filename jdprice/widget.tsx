@@ -53,6 +53,42 @@ const PRICE_URLS = (sku: string) => [
   `https://p.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
   `https://pm.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
 ]
+// 京东 Cookie：这个商品的页面上写着“登录查看价格”，
+// 没登录的请求 p.3.cn 直接没反应。带上京东登录后的 Cookie
+// 再去拉，价格才可能返回。Cookie 在 App 里填（index.tsx），
+// 或 Loon 抓后由 BoxJs 提供，见 JdGetCookie.js。
+const BOXJS_URLS = [
+  'http://boxjs.com/query/data/jd_cookie',
+  'http://boxjs.com/query/data/@JD.cookie',
+]
+
+async function getBoxJsCookie(url: string): Promise<string> {
+  try {
+    const res = await fetch(url).then((r) => r.json())
+    const v = res && (res.val || res.data || res.value)
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof res === 'string' && res.trim()) return res.trim()
+  } catch (e) {}
+  return ''
+}
+
+async function getCookie(): Promise<string> {
+  // 1. App 里填的 Cookie（preference.json）
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.cookie) return String(pref.cookie)
+    }
+  } catch (e) {}
+  // 2. BoxJs（Loon 抓到的 Cookie）
+  for (const url of BOXJS_URLS) {
+    const v = await getBoxJsCookie(url)
+    if (v) return v
+  }
+  return ''
+}
 
 function getSettings(): { sku: string; name: string } {
   try {
@@ -105,16 +141,18 @@ async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promi
   ])
 }
 
-async function fetchPrice(sku: string): Promise<number> {
+async function fetchPrice(sku: string, cookie: string): Promise<number> {
+  const headers: any = {
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+    Referer: `https://item.jd.com/${sku}.html`,
+  }
+  if (cookie) headers.Cookie = cookie
   for (const url of PRICE_URLS(sku)) {
     try {
       const res: any = await fetchJsonWithTimeout(url, {
         method: 'GET',
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-          Referer: `https://item.jd.com/${sku}.html`,
-        },
+        headers,
       })
       const list = Array.isArray(res) ? res : []
       for (const item of list) {
@@ -125,7 +163,28 @@ async function fetchPrice(sku: string): Promise<number> {
       }
     } catch (e) {}
   }
-  throw new Error('取价接口没返回价格，可能是网络或接口被拦了')
+  // 备用：带 Cookie 拉商品页，页里 "jdPrice":"459.00" 就是真价；
+  // 没登录时这里是 "4??"，带问号的不要。
+  try {
+    const text: string = await Promise.race([
+      fetch(`https://item.m.jd.com/product/${sku}.html`, {
+        method: 'GET',
+        headers,
+      }).then((r) => r.text()),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('商品页超时')), 10000),
+      ),
+    ])
+    const m = typeof text === 'string' ? text.match(/"jdPrice":"([0-9]+(?:\.[0-9]+)?)"/) : null
+    if (m) {
+      const p = parseFloat(m[1])
+      if (!isNaN(p) && p > 0) return p
+    }
+  } catch (e) {}
+  throw new Error(
+    '取价接口没返回价格，可能是网络或接口被拦了' +
+      (cookie ? '' : '。这个商品要登录才能看价，先填京东 Cookie 再试'),
+  )
 }
 
 function fmt(n: number): string {
@@ -404,7 +463,8 @@ function ErrorView({ message }: { message: string }) {
   try {
     const history = loadHistory()
     const prevPrice = history.length > 0 ? history[history.length - 1].p : null
-    const price = await fetchPrice(sku)
+    const cookie = await getCookie()
+    const price = await fetchPrice(sku, cookie)
     // 记一条历史：价格变了，或者上条记录超过 15 分钟，才记
     const now = Date.now()
     const last = history.length > 0 ? history[history.length - 1] : null
