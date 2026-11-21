@@ -37,9 +37,16 @@ interface WidgetData {
   history: PriceEntry[]
   updatedAt: string
   updatedTs?: number
+  imageUrl?: string
   fromCache: boolean
   error: string
 }
+
+// 西昊豆包椅L1 的主图（从京东商品页取到的第一张图，已验证能打开）。
+// 换商品时 App 会自动去拉新图；这里只是兜底，
+// 让旧缓存里没存图的时候也能先显示出来。
+const DEFAULT_IMAGE_URL =
+  'https://img10.360buyimg.com/img/jfs/t1/572241/19/12897/149428/6afed993F3dda89e5/008332032016639f.jpg'
 
 // 更新时间段：9-22 点，每 6 小时一次，
 // 也就是 9:00、15:00、21:00 三个点。
@@ -161,18 +168,46 @@ function Footer({
   compact?: boolean
 }) {
   const f = compact ? 11 : 13
+  // 注意：这里必须是一整行 Text，不能拆成三个 Text 放 HStack——
+  // 实测拆开后每个 Text 都会被截成“4…”这种半截，
+  // 一整行加 minScaleFactor 才能完整显示。
   return (
-    <HStack spacing={4}>
-      <Text font={f} foregroundStyle="secondaryLabel" lineLimit={1}>
-        最低 {data.low != null ? fmt(data.low) : '—'}
-      </Text>
-      <Text font={f} foregroundStyle="secondaryLabel" lineLimit={1}>
-        最高 {data.high != null ? fmt(data.high) : '—'}
-      </Text>
+    <Text
+      font={f}
+      foregroundStyle="secondaryLabel"
+      lineLimit={1}
+      minScaleFactor={0.7}
+    >
+      最低 {data.low != null ? fmt(data.low) : '—'} · 最高{' '}
+      {data.high != null ? fmt(data.high) : '—'} · {data.updatedAt}
+    </Text>
+  )
+}
+
+// 价格在左、商品图在右。图是京东主图，
+// App 拉价时会顺带把图链接存进缓存，
+// 没存过就用上面那个默认链接。
+function PriceRow({
+  data,
+  big,
+  imgSize,
+  compact,
+}: {
+  data: WidgetData
+  big: number
+  imgSize: number
+  compact?: boolean
+}) {
+  const url = data.imageUrl || DEFAULT_IMAGE_URL
+  return (
+    <HStack spacing={8}>
+      <PriceBlock data={data} big={big} compact={compact} />
       <Spacer />
-      <Text font={f} foregroundStyle="secondaryLabel" lineLimit={1}>
-        {data.updatedAt} 更新
-      </Text>
+      <Image
+        imageUrl={url}
+        resizable
+        frame={{ width: imgSize, height: imgSize }}
+      />
     </HStack>
   )
 }
@@ -271,7 +306,7 @@ function WidgetView({ data }: { data: WidgetData }) {
     >
       <Header name={data.name} />
       <Spacer />
-      <PriceBlock data={data} big={44} />
+      <PriceRow data={data} big={44} imgSize={88} />
       <Spacer />
       <HistoryBars history={data.history} />
       <Spacer />
@@ -289,7 +324,7 @@ function WidgetView({ data }: { data: WidgetData }) {
         alignment="leading"
       >
         <Header name={data.name} compact />
-        <PriceBlock data={data} big={26} compact />
+        <PriceRow data={data} big={26} imgSize={56} compact />
         <Spacer />
         <Footer data={data} compact />
       </VStack>

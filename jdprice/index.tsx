@@ -1,6 +1,7 @@
 import {
   Button,
   HStack,
+  Image,
   List,
   Navigation,
   NavigationStack,
@@ -29,6 +30,32 @@ const BOXJS_URLS = [
   'http://boxjs.com/query/data/jd_cookie',
   'http://boxjs.com/query/data/@JD.cookie',
 ]
+
+const DEFAULT_IMAGE_URL =
+  'https://img10.360buyimg.com/img/jfs/t1/572241/19/12897/149428/6afed993F3dda89e5/008332032016639f.jpg'
+
+// 从商品页取第一张主图。失败也不影响价格，只是不换图。
+async function fetchImageUrl(sku: string, cookie: string): Promise<string> {
+  try {
+    const headers: any = {
+      'User-Agent':
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+    }
+    if (cookie) headers.Cookie = cookie
+    const text: string = await Promise.race([
+      fetch(`https://item.m.jd.com/product/${sku}.html`, {
+        method: 'GET',
+        headers,
+      }).then((r) => r.text()),
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new Error('商品页超时')), 10000),
+      ),
+    ])
+    const m = typeof text === 'string' ? text.match(/"imagePath":"([^"]+)"/) : null
+    if (m) return `https://img10.360buyimg.com/img/${m[1]}`
+  } catch (e) {}
+  return ''
+}
 
 // 更新时间段：9-22 点，每 6 小时一次，
 // 也就是 9:00、15:00、21:00 三个点。
@@ -122,6 +149,7 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
 function App() {
   const [sku, setSku] = useState<string>('100244780555')
   const [name, setName] = useState<string>('西昊豆包椅L1')
+  const [imageUrl, setImageUrl] = useState<string>('')
   const [cookie, setCookie] = useState<string>('')
   const [loaded, setLoaded] = useState(false)
   const [price, setPrice] = useState<string>('')
@@ -167,6 +195,9 @@ function App() {
         }
       }
       const p = await fetchPrice(sku, ck)
+      let img = imageUrl
+      if (!img) img = await fetchImageUrl(sku, ck)
+      if (img) setImageUrl(img)
       const now = Date.now()
       const d = new Date()
       const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
@@ -195,6 +226,7 @@ function App() {
         history: kept,
         updatedAt,
         updatedTs: now,
+        imageUrl: img || DEFAULT_IMAGE_URL,
         fromCache: false,
         error: '',
       }
@@ -219,6 +251,7 @@ function App() {
         const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
         if (pref.sku) setSku(String(pref.sku))
         if (pref.name) setName(pref.name)
+        if (pref.imageUrl) setImageUrl(pref.imageUrl)
         if (pref.cookie) setCookie(pref.cookie)
       } catch (e) {
         console.error('Failed to parse preference', e)
@@ -228,6 +261,7 @@ function App() {
       try {
         const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
         if (cached.price != null) setPrice(Number(cached.price).toFixed(2))
+        if (cached.imageUrl) setImageUrl(cached.imageUrl)
         if (cached.updatedAt) setStatus(`上次更新：${cached.updatedAt}`)
       } catch (e) {}
     }
@@ -239,9 +273,9 @@ function App() {
     if (!FileManager.existsSync(root)) {
       FileManager.createDirectorySync(root, true)
     }
-    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, cookie }))
+    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, imageUrl, cookie }))
     Widget.reloadAll()
-  }, [sku, name, cookie, loaded])
+  }, [sku, name, imageUrl, cookie, loaded])
 
   // 设置加载完后自动拉一次价（按 9-22 点、每 6 小时那个规则）
   useEffect(() => {
@@ -259,6 +293,22 @@ function App() {
           </HStack>
           <Text foregroundStyle="secondaryLabel">{status}</Text>
           <Button title="刷新价格" action={() => refresh()} />
+        </Section>
+        <Section header={<Text>商品图片</Text>}>
+          <HStack>
+            <Image
+              imageUrl={imageUrl || DEFAULT_IMAGE_URL}
+              resizable
+              frame={{ width: 80, height: 80 }}
+            />
+            <Text foregroundStyle="secondaryLabel">
+              小组件右边的图就是这张。换商品后打开 App 会自动去拉新图；这里也可以手动贴一张图片链接。
+            </Text>
+          </HStack>
+          <HStack>
+            <Text>图片链接</Text>
+            <TextField title="留空自动拉取" value={imageUrl} onChanged={setImageUrl} />
+          </HStack>
         </Section>
         <Section header={<Text>商品</Text>}>
           <HStack>
