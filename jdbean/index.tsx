@@ -282,15 +282,24 @@ function App() {
     }
     setStatus('正在拉取…')
     try {
-      let ck = cookie
-      if (!ck) {
-        for (const url of BOXJS_URLS) {
-          const v = await getBoxJsCookie(url)
-          if (v) {
-            ck = v
-            break
-          }
+      // Cookie 优先用 BoxJs 里 Loon 新抓的，再用 App 里填过的。
+      // 之前是反过来的：App 里一旦填过（或存过）旧 Cookie，
+      // refresh 就一直用旧的，BoxJs 根本轮不到——
+      // 所以 Loon 明明新抓到了（弹了通知），App 还在用旧 Cookie，
+      // 明细一直「非JSON」。新抓到的就换上，并同步回输入框和共享区，
+      // 小组件下次也跟着用新的。
+      let ck = ''
+      for (const url of BOXJS_URLS) {
+        const v = await getBoxJsCookie(url)
+        if (v) {
+          ck = v
+          break
         }
+      }
+      if (ck && ck !== cookie) {
+        setCookie(ck)
+      } else if (!ck) {
+        ck = cookie
       }
       if (!ck)
         throw new Error(
@@ -446,7 +455,7 @@ function App() {
             <SecureField title="粘贴京东 Cookie..." value={cookie} onChanged={setCookie} />
           </HStack>
           <Text foregroundStyle="secondaryLabel">
-            和京东价格那个小组件共用同一个 Cookie，填过一次就不用再填；也可以用 Loon 抓（Jd.lpx），Cookie 会自动写进 BoxJs。Cookie 只存在手机本地，不会上传云端，也不要提交到 GitHub。
+            和京东价格那个小组件共用同一个 Cookie，填过一次就不用再填；也可以用 Loon 抓（Jd.lpx），Cookie 会自动写进 BoxJs。每次刷新优先用 BoxJs 里 Loon 新抓的，App 里填的只当备用。Cookie 只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
         <Section header={<Text>说明</Text>}>
