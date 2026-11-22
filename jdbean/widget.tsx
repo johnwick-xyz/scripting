@@ -217,6 +217,14 @@ async function fetchBean(cookie: string): Promise<BeanData> {
     days.push({ date: fmtDate(d), income: 0, expense: 0 })
   }
   const startDate = days[0].date
+  // 明细先走京东 App 自己的接口：
+  //   POST https://api.m.jd.com/client.action?functionId=getJingBeanBalanceDetail
+  //   body: body=<URL编码的 {"pageSize":"20","page":"N"}>&appid=ld
+  //   回来是 detailList[]，每条有 date 和 amount。
+  // 原来那个 bean.m.jd.com 的 H5 接口现在直接回 403
+  // “file-no.2 conf not found”——不是 Cookie 的问题，是京东那边
+  // 这个接口的配置找不到了（或不给走了），所以先走 App 接口，
+  // App 接口不行再试 H5 接口；第一次哪边通了，后面就固定走哪边。
   const detailHeaders: any = {
     'X-Requested-With': 'XMLHttpRequest',
     Connection: 'keep-alive',
@@ -230,62 +238,108 @@ async function fetchBean(cookie: string): Promise<BeanData> {
     'Accept-Language': 'zh-cn',
     Accept: 'application/json, text/javascript, */*; q=0.01',
   }
-  let page = 1
-  let stop = false
-  let detailError = ''
-  let detailDebug = ''
-  while (!stop && page <= 8) {
-    let text = ''
-    let status = 0
+  const apiHeaders: any = {
+    Host: 'api.m.jd.com',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent':
+      'jdapp;iPhone;9.4.4;14.3;network/4g;Mozilla/5.0 (iPhone; CPU iPhone OS 14_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148;supportJDSHWK/1',
+    Cookie: cookie,
+  }
+  // 明细接口返回的 date 可能是 "2026-11-22 10:00:00"，也可能是
+  // ISO 串，都先归一成 YYYY-MM-DD 再比对。
+  function toDayStr(v: any): string {
+    const s = String(v || '')
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+    const d = new Date(s)
+    return isNaN(d.getTime()) ? '' : fmtDate(d)
+  }
+  // 拉一页明细。source '' = 先试 App 接口，不行再试 H5 接口；
+  // 'api' / 'bean' = 只走一边。返回 { list, source, error, debug }，
+  // source 是这页实际走通的那边。
+  async function fetchDetailPage(
+    page: number,
+    source: string,
+  ): Promise<{ list: any[] | null; source: string; error: string; debug: string }> {
+    if (source !== 'bean') {
+      try {
+        const res = await fetchWithTimeout(
+          'https://api.m.jd.com/client.action?functionId=getJingBeanBalanceDetail',
+          {
+            method: 'POST',
+            headers: apiHeaders,
+            body: `body=${encodeURIComponent(JSON.stringify({ pageSize: '20', page: String(page) }))}&appid=ld`,
+          },
+          8000,
+        )
+        const text = await res.text()
+        let j: any = null
+        try {
+          j = text && text.trim() ? JSON.parse(text) : null
+        } catch (e) {
+          return { list: null, source: '', error: '非JSON', debug: `App接口 HTTP${res.status}` }
+        }
+        if (j && Array.isArray(j.detailList)) return { list: j.detailList, source: 'api', error: '', debug: '' }
+        return {
+          list: null,
+          source: '',
+          error: j && j.code != null ? `code=${j.code}` : '无明细',
+          debug: `App接口 HTTP${res.status}`,
+        }
+      } catch (e) {
+        // App 接口请求本身挂了（超时/断网），往下试 H5 接口
+      }
+      if (source === 'api') return { list: null, source: '', error: '请求失败', debug: '' }
+    }
     try {
       const res = await fetchWithTimeout(
         'https://bean.m.jd.com/beanDetail/detail.json',
-        {
-          method: 'POST',
-          headers: detailHeaders,
-          body: `page=${page}`,
-        },
+        { method: 'POST', headers: detailHeaders, body: `page=${page}` },
         8000,
       )
-      status = res.status
-      text = await res.text()
-    } catch (e) {
-      // 明细这一步挂了也不能把总数也丢了：记下原因就停，
-      // 总数照样显示。
-      if (!detailError) detailError = '请求失败'
-      break
-    }
-    // 明细接口 Cookie 失效时会返回 302 的 HTML 页面（不是 JSON），
-    // 直接 res.json() 会抛 SyntaxError，整个拉取就崩了。
-    // 这里先读文本、解析失败就记下原因、停止翻页，
-    // 京豆总数已经拿到手了，照样能显示，只是当天收支是空的。
-    // 顺便记下服务器到底回了什么（状态码 + 正文前 80 字，去标签）。
-    let j: any = null
-    try {
-      j = text && text.trim() ? JSON.parse(text) : null
-    } catch (e) {
-      if (!detailError) detailError = '非JSON'
-      if (!detailDebug) {
+      const status = res.status
+      const text = await res.text()
+      let j: any = null
+      try {
+        j = text && text.trim() ? JSON.parse(text) : null
+      } catch (e) {
         const snippet = (text || '')
           .replace(/<[^>]*>/g, ' ')
           .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 80)
-        detailDebug = `HTTP${status} ${snippet || '（空内容）'}`
+        return { list: null, source: '', error: '非JSON', debug: `H5接口 HTTP${status} ${snippet || '（空内容）'}` }
       }
+      if (j && j.code === '0' && Array.isArray(j.jingDetailList))
+        return { list: j.jingDetailList, source: 'bean', error: '', debug: '' }
+      return {
+        list: null,
+        source: '',
+        error: j && j.code != null ? `code=${j.code}` : '无返回',
+        debug: `H5接口 HTTP${status}`,
+      }
+    } catch (e) {
+      return { list: null, source: '', error: '请求失败', debug: '' }
+    }
+  }
+  let page = 1
+  let stop = false
+  let detailError = ''
+  let detailDebug = ''
+  let detailSource = ''
+  while (!stop && page <= 8) {
+    const r = await fetchDetailPage(page, detailSource)
+    if (!r.list) {
+      if (!detailError) detailError = r.error
+      if (!detailDebug) detailDebug = r.debug
       break
     }
-    if (!j || j.code !== '0') {
-      if (!detailError) detailError = j && j.code != null ? `code=${j.code}` : '无返回'
-      break
-    }
-    const list = Array.isArray(j.jingDetailList) ? j.jingDetailList : []
-    if (list.length === 0) {
+    if (!detailSource) detailSource = r.source
+    if (r.list.length === 0) {
       if (page === 1 && !detailError) detailError = '第1页0条'
       break
     }
-    for (const item of list) {
-      const dateStr = String(item.date || '').split(' ')[0]
+    for (const item of r.list) {
+      const dateStr = toDayStr(item.date)
       if (!dateStr || dateStr < startDate) {
         stop = true
         break
