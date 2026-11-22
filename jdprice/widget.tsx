@@ -356,28 +356,46 @@ function PriceRow({
 function Footer({
   data,
   compact,
+  tiny,
 }: {
   data: WidgetData
   compact?: boolean
+  // 小号只有 155pt 宽，底行 "最低 479.00 · 最高 479.00 · 11/22 21:13"
+  // 放不下，时间会被截成 "11/22…"（2026-11-22 截图就是这样）。
+  // 小号上今天更新的只显示 "21:13"，不是今天的才显示 "11/22 21:13"，
+  // 字允许缩到 0.55；中号 329pt 宽放得下，不动。
+  tiny?: boolean
 }) {
   const f = compact ? 11 : 13
-  // 注意：这里必须是一整行 Text，不能拆成三个 Text 放 HStack——
-  // 实测拆开后每个 Text 都会被截成“4…”这种半截，
-  // 一整行加 minScaleFactor 才能完整显示。
+  let time = data.updatedAt
+  let tryAt = data.lastTryAt || ''
+  if (tiny && data.updatedTs) {
+    const u = new Date(data.updatedTs)
+    const n = new Date()
+    const pad = (x: number) => (x < 10 ? '0' + x : '' + x)
+    if (
+      u.getFullYear() === n.getFullYear() &&
+      u.getMonth() === n.getMonth() &&
+      u.getDate() === n.getDate()
+    ) {
+      time = `${pad(u.getHours())}:${pad(u.getMinutes())}`
+    }
+    if (tryAt) tryAt = tryAt.split(' ')[1] || tryAt
+  }
   return (
     <Text
       font={f}
       foregroundStyle="secondaryLabel"
       lineLimit={1}
-      minScaleFactor={0.7}
+      minScaleFactor={tiny ? 0.55 : 0.7}
     >
       最低 {data.low != null ? fmt(data.low) : '—'} · 最高{' '}
-      {data.high != null ? fmt(data.high) : '—'} · {data.updatedAt}
+      {data.high != null ? fmt(data.high) : '—'} · {time}
       {data.lastTryTs != null &&
       data.updatedTs != null &&
       data.lastTryTs > data.updatedTs &&
-      data.lastTryAt
-        ? ` · ${data.lastTryAt} 更新失败`
+      tryAt
+        ? ` · ${tryAt} 更新失败`
         : ''}
     </Text>
   )
@@ -528,6 +546,7 @@ function WidgetView({ data }: { data: WidgetData }) {
   // 外层留白左右 12、上下 8，文字不再贴着卡片边；
   // 之前只有 6，价格和时间看着都贴边了。
   if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
+    const tiny = isSmall || (!family && W < 200)
     return (
       <VStack
         padding={{ horizontal: 12, vertical: 8 }}
@@ -540,7 +559,7 @@ function WidgetView({ data }: { data: WidgetData }) {
         <PriceRow data={data} big={24} imgSize={50} compact />
         <PrevPrices history={data.history} />
         <Spacer />
-        <Footer data={data} compact />
+        <Footer data={data} compact tiny={tiny} />
       </VStack>
     )
   }
