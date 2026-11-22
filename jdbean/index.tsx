@@ -131,6 +131,8 @@ async function fetchBean(cookie: string): Promise<{
   // BeanData.detailError 的说明：之前是悄悄吞掉的，总数能显示、
   // 今日却是 0，根本看不出是哪一步出的错。
   detailError: string
+  // 明细返回非 JSON 时，服务器到底回了什么（状态码 + 正文前 80 字）。
+  detailDebug: string
 }> {
   const headers: any = {
     'User-Agent':
@@ -188,14 +190,17 @@ async function fetchBean(cookie: string): Promise<{
   let page = 1
   let stop = false
   let detailError = ''
+  let detailDebug = ''
   while (!stop && page <= 8) {
     let text = ''
+    let status = 0
     try {
       const res = await fetchWithTimeout(
         'https://bean.m.jd.com/beanDetail/detail.json',
         { method: 'POST', headers: detailHeaders, body: `page=${page}` },
         8000,
       )
+      status = res.status
       text = await res.text()
     } catch (e) {
       // 明细这一步挂了也不能把总数也丢了：记下原因就停，
@@ -206,11 +211,22 @@ async function fetchBean(cookie: string): Promise<{
     // 明细接口 Cookie 失效时会返回 302 的 HTML 页面（不是 JSON），
     // 直接 res.json() 会抛 SyntaxError。这里先读文本、解析失败
     // 就记下原因、停止翻页，京豆总数已经拿到手了照样能显示。
+    // 顺便记下服务器到底回了什么（状态码 + 正文前 80 字，去标签），
+    // 不然只知道“非JSON”，不知道回的是登录页、验证页还是空内容，
+    // 没法往下查。
     let j: any = null
     try {
       j = text && text.trim() ? JSON.parse(text) : null
     } catch (e) {
       if (!detailError) detailError = '非JSON'
+      if (!detailDebug) {
+        const snippet = (text || '')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 80)
+        detailDebug = `HTTP${status} ${snippet || '（空内容）'}`
+      }
       break
     }
     if (!j || j.code !== '0') {
@@ -236,7 +252,7 @@ async function fetchBean(cookie: string): Promise<{
     }
     page++
   }
-  return { total, nickname, avatarUrl, days, detailError }
+  return { total, nickname, avatarUrl, days, detailError, detailDebug }
 }
 
 function App() {
@@ -289,10 +305,12 @@ function App() {
       // 明细一直「非JSON」。新抓到的就换上，并同步回输入框和共享区，
       // 小组件下次也跟着用新的。
       let ck = ''
+      let cookieSource = '输入框'
       for (const url of BOXJS_URLS) {
         const v = await getBoxJsCookie(url)
         if (v) {
           ck = v
+          cookieSource = 'BoxJs'
           break
         }
       }
@@ -326,6 +344,7 @@ function App() {
         fromCache: false,
         error: '',
         detailError: bean.detailError,
+        detailDebug: bean.detailDebug,
       }
       if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
       FileManager.writeAsStringSync(cachePath, JSON.stringify(data))
@@ -333,7 +352,9 @@ function App() {
       if (ck) Storage.set('jd_cookie', ck, { shared: true })
       setStatus(
         `已更新：${fmtTime(new Date())}，下次：${fmtSlot(nextSlot(new Date()))}` +
-          (bean.detailError ? `；明细：${bean.detailError}` : ''),
+          (bean.detailError ? `；明细：${bean.detailError}` : '') +
+          (bean.detailDebug ? `（${bean.detailDebug}）` : '') +
+          `；Cookie来源：${cookieSource}`,
       )
       Widget.reloadAll()
     } catch (e) {

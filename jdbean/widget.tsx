@@ -60,6 +60,8 @@ interface BeanData {
   // 之前这里是空着悄悄吞掉的，总数能显示、今日却是 0，
   // 根本看不出是哪一步出的错，现在把它记下来、显示出来。
   detailError?: string
+  // 明细返回非 JSON 时，服务器到底回了什么（状态码 + 正文前 80 字）。
+  detailDebug?: string
 }
 
 function nextSlot(now: Date): Date {
@@ -231,8 +233,10 @@ async function fetchBean(cookie: string): Promise<BeanData> {
   let page = 1
   let stop = false
   let detailError = ''
+  let detailDebug = ''
   while (!stop && page <= 8) {
     let text = ''
+    let status = 0
     try {
       const res = await fetchWithTimeout(
         'https://bean.m.jd.com/beanDetail/detail.json',
@@ -243,6 +247,7 @@ async function fetchBean(cookie: string): Promise<BeanData> {
         },
         8000,
       )
+      status = res.status
       text = await res.text()
     } catch (e) {
       // 明细这一步挂了也不能把总数也丢了：记下原因就停，
@@ -254,11 +259,20 @@ async function fetchBean(cookie: string): Promise<BeanData> {
     // 直接 res.json() 会抛 SyntaxError，整个拉取就崩了。
     // 这里先读文本、解析失败就记下原因、停止翻页，
     // 京豆总数已经拿到手了，照样能显示，只是当天收支是空的。
+    // 顺便记下服务器到底回了什么（状态码 + 正文前 80 字，去标签）。
     let j: any = null
     try {
       j = text && text.trim() ? JSON.parse(text) : null
     } catch (e) {
       if (!detailError) detailError = '非JSON'
+      if (!detailDebug) {
+        const snippet = (text || '')
+          .replace(/<[^>]*>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 80)
+        detailDebug = `HTTP${status} ${snippet || '（空内容）'}`
+      }
       break
     }
     if (!j || j.code !== '0') {
@@ -295,6 +309,7 @@ async function fetchBean(cookie: string): Promise<BeanData> {
     fromCache: false,
     error: '',
     detailError,
+    detailDebug,
   }
 }
 
