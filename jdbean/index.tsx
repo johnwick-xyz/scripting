@@ -51,6 +51,19 @@ function isUpdateWindow(now: Date): boolean {
   return h >= 9 && h < 22
 }
 
+// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
+function currentSlot(now: Date): Date {
+  const slots = [9, 15, 21]
+  let slot = -1
+  for (const h of slots) {
+    if (now.getHours() >= h) slot = h
+  }
+  const d = new Date(now)
+  if (slot === -1) d.setDate(d.getDate() - 1)
+  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  return d
+}
+
 function fmtDate(d: Date): string {
   const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
@@ -216,7 +229,11 @@ function App() {
   const [status, setStatus] = useState<string>('打开 App 后自动拉取…')
 
   // auto=true 是打开 App 时自动拉，manual（点“刷新京豆”）永远拉。
-  // 自动拉只在 9-22 点、且上次拉取超过 6 小时才拉。
+  // 自动拉只在 9-22 点、且上次拉取在当前这个更新点（9:00/15:00/21:00）
+  // 之前才拉。不能用“6 小时内已拉过”来判断——手动点一次刷新，
+  // updatedTs 就刷成现在，小组件到下一个更新点一看“才过 4 小时”
+  // 就直接跳过，自动更新就永远不跑（价格那个 2026-11-22 15:00
+  // 就是这么错过的，这里是同一个问题，一起改掉）。
   async function refresh(auto = false) {
     const now0 = new Date()
     if (auto) {
@@ -236,8 +253,8 @@ function App() {
         } catch (e) {
           ts = null
         }
-        if (ts && now0.getTime() - ts < 6 * 3600 * 1000) {
-          setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
+        if (ts && ts >= currentSlot(now0).getTime()) {
+          setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0))}`)
           return
         }
       } catch (e) {}
