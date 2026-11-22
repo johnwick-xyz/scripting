@@ -6,21 +6,24 @@ import {
   Text,
   VStack,
   Widget,
+  fetch,
   modifiers,
 } from 'scripting'
 import { rpt } from './utils'
 
-// 京东价格监控 Scripting 小组件（改版：小组件本身不联网）
-// 测试证明了：不联网的测试小组件能正常出来，
-// 卡住的是小组件里拉 p.3.cn / BoxJs 那几步网络——
-// 在小组件里，fetch 一旦没反应，超时也靠不住，
-// 就一直打圈圈，永远到不了 Widget.present。
-// 所以改成：取价只在 App 里做（index.tsx），
-// App 拉到价就存进 cache.json / price_history.json，
-// 小组件只读本地缓存，秒出，绝不转圈。
-// 代价：小组件显示的是上次 App 打开时拉到的价，
-// 不是每次刷新都重新拉。想看最新价就打开一次 App，
-// 它会自动拉新价并刷新小组件。
+// 京东价格监控 Scripting 小组件
+//
+// 取价分两路：
+// 1) 小组件自己拉价——但只用系统原生的超时
+//    AbortSignal.timeout()，不用 setTimeout 做超时，
+//    因为 setTimeout 在小组件里靠不住，之前就是它
+//    让预览一直打圈圈。原生超时 8 秒没返回就断开，
+//    失败了就直接显示缓存价，绝不转圈。
+// 2) App 里拉价（打开 App 时，9-22 点、每 6 小时一次），
+//    拉到就写进 Storage 共享域 + 本地文件，小组件读缓存。
+// 两边共用同一份缓存（Storage 'jd_price_cache'，shared: true）。
+// App 和小组件是两次分开的执行，文件传不过去，
+// 必须走 Storage shared 域，文件只当备用。
 
 interface PriceEntry {
   t: number
@@ -38,13 +41,14 @@ interface WidgetData {
   updatedAt: string
   updatedTs?: number
   imageUrl?: string
+  imagePath?: string
   fromCache: boolean
   error: string
 }
 
 // 西昊豆包椅L1 的主图（从京东商品页取到的第一张图，已验证能打开）。
-// 换商品时 App 会自动去拉新图；这里只是兜底，
-// 让旧缓存里没存图的时候也能先显示出来。
+// 换商品时 App 会自动去拉新图并下载到本地；
+// 这里只是兜底，让旧缓存里没存图的时候也能先显示出来。
 const DEFAULT_IMAGE_URL =
   'https://img10.360buyimg.com/img/jfs/t1/572241/19/12897/149428/6afed993F3dda89e5/008332032016639f.jpg'
 
@@ -63,8 +67,19 @@ function nextSlot(now: Date): Date {
   return d
 }
 
+function isUpdateWindow(now: Date): boolean {
+  const h = now.getHours()
+  return h >= 9 && h < 22
+}
+
 function fmt(n: number): string {
   return n.toFixed(2)
+}
+
+function fmtTime(t: number): string {
+  const d = new Date(t)
+  const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+  return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 function changeInfo(data: WidgetData): { text: string; up: boolean; down: boolean } {
@@ -81,6 +96,135 @@ function changeInfo(data: WidgetData): { text: string; up: boolean; down: boolea
     down: diff < 0,
   }
 }
+
+// ---- 取价（小组件里，用原生超时，绝不靠 setTimeout） ----
+
+async function fetchWithTimeout(url: string, options: any, ms: number): Promise<any> {
+  const res = await fetch(url, { ...options, signal: AbortSignal.timeout(ms) })
+  return res
+}
+
+async function getCookie(): Promise<string> {
+  // 1) App 存进 Storage 共享域的 Cookie
+  try {
+    const v: any = Storage.get('jd_cookie', { shared: true })
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  } catch (e) {}
+  // 2) App 设置页保存的 preference.json
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.cookie) return String(pref.cookie)
+    }
+  } catch (e) {}
+  // 3) BoxJs（Loon 抓的），每条 3 秒原生超时
+  for (const url of [
+    'http://boxjs.com/query/data/jd_cookie',
+    'http://boxjs.com/query/data/@JD.cookie',
+  ]) {
+    try {
+      const res = await fetchWithTimeout(url, { method: 'GET' }, 3000)
+      const j: any = await res.json()
+      const v = j && (j.val || j.data || j.value)
+      if (typeof v === 'string' && v.trim()) return v.trim()
+      if (typeof j === 'string' && j.trim()) return j.trim()
+    } catch (e) {}
+  }
+  return ''
+}
+
+async function getSku(): Promise<string> {
+  try {
+    const v: any = Storage.get('jd_sku', { shared: true })
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  } catch (e) {}
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.sku) return String(pref.sku)
+    }
+  } catch (e) {}
+  return '100244780555'
+}
+
+async function fetchPrice(sku: string, cookie: string): Promise<number> {
+  const headers: any = {
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+    Referer: `https://item.jd.com/${sku}.html`,
+  }
+  if (cookie) headers.Cookie = cookie
+  for (const url of [
+    `https://p.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
+    `https://pm.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
+  ]) {
+    try {
+      const res: any = await fetchWithTimeout(url, { method: 'GET', headers }, 8000)
+      const list = await res.json()
+      const arr = Array.isArray(list) ? list : []
+      for (const item of arr) {
+        if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
+          const p = parseFloat(item.p)
+          if (!isNaN(p) && p > 0) return p
+        }
+      }
+    } catch (e) {}
+  }
+  // 备用：带 Cookie 拉商品页，页里 "jdPrice":"459.00" 就是真价；
+  // 没登录时这里是 "4??"，带问号的不要。
+  try {
+    const res = await fetchWithTimeout(
+      `https://item.m.jd.com/product/${sku}.html`,
+      { method: 'GET', headers },
+      10000,
+    )
+    const text: string = await res.text()
+    const m = typeof text === 'string' ? text.match(/"jdPrice":"([0-9]+(?:\.[0-9]+)?)"/) : null
+    if (m) {
+      const p = parseFloat(m[1])
+      if (!isNaN(p) && p > 0) return p
+    }
+  } catch (e) {}
+  throw new Error('取价接口没返回价格')
+}
+
+// ---- 读 / 写缓存 ----
+
+function readCached(): WidgetData | null {
+  try {
+    const v: any = Storage.get('jd_price_cache', { shared: true })
+    if (v) return typeof v === 'string' ? JSON.parse(v) : v
+  } catch (e) {}
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const cachePath = Path.join(root, 'cache.json')
+    if (FileManager.existsSync(cachePath)) {
+      return JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
+    }
+  } catch (e) {}
+  return null
+}
+
+function saveCache(data: WidgetData) {
+  try {
+    Storage.set('jd_price_cache', data, { shared: true })
+  } catch (e) {}
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
+    FileManager.writeAsStringSync(Path.join(root, 'cache.json'), JSON.stringify(data))
+    FileManager.writeAsStringSync(
+      Path.join(root, 'price_history.json'),
+      JSON.stringify(data.history || []),
+    )
+  } catch (e) {}
+}
+
+// ---- 视图 ----
 
 function Header({ name, compact }: { name: string; compact?: boolean }) {
   return (
@@ -160,6 +304,37 @@ function PriceBlock({
   )
 }
 
+// 商品图：优先用 App 下载到本地的图片文件（小组件里远程图经常加载失败，
+// 上一版就是右上角一个破图图标），没有本地文件才用远程链接。
+function PriceRow({
+  data,
+  big,
+  imgSize,
+  compact,
+}: {
+  data: WidgetData
+  big: number
+  imgSize: number
+  compact?: boolean
+}) {
+  const img = data.imagePath ? (
+    <Image filePath={data.imagePath} resizable frame={{ width: imgSize, height: imgSize }} />
+  ) : (
+    <Image
+      imageUrl={data.imageUrl || DEFAULT_IMAGE_URL}
+      resizable
+      frame={{ width: imgSize, height: imgSize }}
+    />
+  )
+  return (
+    <HStack spacing={8}>
+      <PriceBlock data={data} big={big} compact={compact} />
+      <Spacer />
+      {img}
+    </HStack>
+  )
+}
+
 function Footer({
   data,
   compact,
@@ -184,31 +359,42 @@ function Footer({
   )
 }
 
-// 价格在左、商品图在右。图是京东主图，
-// App 拉价时会顺带把图链接存进缓存，
-// 没存过就用上面那个默认链接。
-function PriceRow({
-  data,
-  big,
-  imgSize,
-  compact,
-}: {
-  data: WidgetData
-  big: number
-  imgSize: number
-  compact?: boolean
-}) {
-  const url = data.imageUrl || DEFAULT_IMAGE_URL
+// 最新更新之前的三次价格及更新时间。
+// history 最后一条就是最新那次，所以取倒数第 2、3、4 条，
+// 最近的在上面。不用 map，用显式三行，避免小组件里
+// JSX 数组渲染出问题。
+function PrevPrices({ history }: { history: PriceEntry[] }) {
+  const prev = (history || []).slice(0, -1).slice(-3).reverse()
+  if (prev.length === 0) {
+    return (
+      <Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>
+        暂无更早记录，刷新几次后显示前三次价格
+      </Text>
+    )
+  }
+  // 排版跟原来一样：价格贴左、时间贴右，中间一个 Spacer；
+  // 只是外层留白加大了，文字不再贴边。
+  // 上一版改成居中是不对的，已经改回来。
+  const row = (x: PriceEntry | undefined) => {
+    if (!x) return null
+    return (
+      <HStack spacing={4}>
+        <Text font={10} fontWeight="semibold" foregroundStyle="label" lineLimit={1}>
+          ¥{fmt(x.p)}
+        </Text>
+        <Spacer />
+        <Text font={10} foregroundStyle="secondaryLabel" lineLimit={1}>
+          {fmtTime(x.t)}
+        </Text>
+      </HStack>
+    )
+  }
   return (
-    <HStack spacing={8}>
-      <PriceBlock data={data} big={big} compact={compact} />
-      <Spacer />
-      <Image
-        imageUrl={url}
-        resizable
-        frame={{ width: imgSize, height: imgSize }}
-      />
-    </HStack>
+    <VStack spacing={1} alignment="leading">
+      {row(prev[0])}
+      {row(prev[1])}
+      {row(prev[2])}
+    </VStack>
   )
 }
 
@@ -307,24 +493,28 @@ function WidgetView({ data }: { data: WidgetData }) {
       <Header name={data.name} />
       <Spacer />
       <PriceRow data={data} big={44} imgSize={88} />
+      <PrevPrices history={data.history} />
       <Spacer />
       <HistoryBars history={data.history} />
       <Spacer />
       <Footer data={data} />
     </VStack>
   )
-  // 中号（329x155）和小号（155x155）：高都只有 155pt，竖排列表
+  // 中号（329x155）和小号（155x155）：竖排列表。
+  // 外层留白左右 12、上下 8，文字不再贴着卡片边；
+  // 之前只有 6，价格和时间看着都贴边了。
   if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
     return (
       <VStack
-        padding={6}
+        padding={{ horizontal: 12, vertical: 8 }}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
-        spacing={2}
+        spacing={1}
         alignment="leading"
       >
         <Header name={data.name} compact />
-        <PriceRow data={data} big={26} imgSize={56} compact />
+        <PriceRow data={data} big={24} imgSize={50} compact />
+        <PrevPrices history={data.history} />
         <Spacer />
         <Footer data={data} compact />
       </VStack>
@@ -350,30 +540,54 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-// 小组件只读本地缓存，不联网、不读 BoxJs，秒出。
-// 注意：App 和小组件是两次分开的执行，不能靠文件传数据——
-// 上一版就是栽在这儿：App 写的 cache.json，小组件读不到。
-// 官方文档的办法是全局 Storage，shared: true 才是跨界面共享的域，
-// 所以 App 写 Storage，小组件先读 Storage，文件只当备用。
-function readCached(): any | null {
-  try {
-    const v: any = Storage.get('jd_price_cache', { shared: true })
-    if (v) return typeof v === 'string' ? JSON.parse(v) : v
-  } catch (e) {}
-  try {
-    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
-    const cachePath = Path.join(root, 'cache.json')
-    if (FileManager.existsSync(cachePath)) {
-      return JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
-    }
-  } catch (e) {}
-  return null
-}
-
-// 告诉系统下次在下一个更新点（9:00 / 15:00 / 21:00）
-// 再重新跑一次小组件。
+// 主流程：先读缓存；到更新点（9-22 点、距上次超过 6 小时）
+// 就自己拉一次新价，拉到了更新缓存，拉不到就显示旧缓存，
+// 绝不等、绝不转圈。最后告诉系统下一个更新点再跑一次。
 ;(async () => {
+  const now = new Date()
   const cached = readCached()
+  const needFetch =
+    !cached ||
+    cached.price == null ||
+    (isUpdateWindow(now) &&
+      (!cached.updatedTs || now.getTime() - cached.updatedTs >= 6 * 3600 * 1000))
+  if (needFetch && cached) {
+    // 有缓存时先拉，拉不到就用缓存顶上
+    try {
+      const cookie = await getCookie()
+      const p = await fetchPrice(cached.sku, cookie)
+      const d = new Date()
+      const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+      const history: PriceEntry[] = Array.isArray(cached.history) ? cached.history.slice() : []
+      const prevPrice = history.length > 0 ? history[history.length - 1].p : null
+      const last = history.length > 0 ? history[history.length - 1] : null
+      if (!last || last.p !== p || now.getTime() - last.t > 15 * 60 * 1000) {
+        history.push({ t: now.getTime(), p })
+      }
+      const kept = history.slice(-30)
+      const prices = kept.map((x) => x.p)
+      const data: WidgetData = {
+        ...cached,
+        price: p,
+        prevPrice,
+        low: prices.length ? Math.min(...prices) : null,
+        high: prices.length ? Math.max(...prices) : null,
+        history: kept,
+        updatedAt: `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+        updatedTs: now.getTime(),
+        fromCache: false,
+        error: '',
+      }
+      saveCache(data)
+      Widget.present(<WidgetView data={data} />, {
+        policy: 'after',
+        date: nextSlot(new Date()),
+      } as any)
+      return
+    } catch (e) {
+      // 拉失败了就显示旧缓存，不报错、不转圈
+    }
+  }
   if (cached && cached.price != null) {
     cached.fromCache = true
     Widget.present(<WidgetView data={cached} />, {
@@ -382,7 +596,34 @@ function readCached(): any | null {
     } as any)
     return
   }
+  // 完全没有缓存（第一次用）：直接拉一次，拉不到就提示打开 App
+  try {
+    const cookie = await getCookie()
+    const sku = await getSku()
+    const p = await fetchPrice(sku, cookie)
+    const d = new Date()
+    const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+    const data: WidgetData = {
+      name: '西昊豆包椅L1',
+      sku,
+      price: p,
+      prevPrice: null,
+      low: p,
+      high: p,
+      history: [{ t: now.getTime(), p }],
+      updatedAt: `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      updatedTs: now.getTime(),
+      fromCache: false,
+      error: '',
+    }
+    saveCache(data)
+    Widget.present(<WidgetView data={data} />, {
+      policy: 'after',
+      date: nextSlot(new Date()),
+    } as any)
+    return
+  } catch (e) {}
   Widget.present(
-    <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。预览里看到这条的话，点右上角“重新载入”再看一次。" />,
+    <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。" />,
   )
 })()
