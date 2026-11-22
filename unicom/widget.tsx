@@ -344,7 +344,7 @@ function WidgetView({ data }: { data: WidgetData }) {
   if (isRectangular) {
     return (
       <VStack
-        padding={8}
+        padding={{ horizontal: 12, vertical: 8 }}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
         spacing={4}
@@ -413,12 +413,13 @@ function WidgetView({ data }: { data: WidgetData }) {
   // 中号（329x155）和小号（155x155）：高都只有 155pt，
   // 不能再用两栏 / 截断，改成和截图一样的竖排列表，
   // 只是字号和间距收紧：头 11pt、余额 18pt、条高 5pt、
-  // 边距 6、间距 2，底行短标签（小号 155pt 宽放不下全称）。
+  // 边距左右 12、上下 8、间距 2，底行短标签（小号 155pt 宽放不下全称）。
+  // 跟京东小组件一样：四周留白加大，文字不再贴着卡片边。
   // 顺序和大号完全一致：头、话费、流量条、通话条、底行。
   if (isMedium || isSmall || (!family && W < 200) || (!family && W > H * 1.4)) {
     return (
       <VStack
-        padding={6}
+        padding={{ horizontal: 12, vertical: 8 }}
         frame={Widget.displaySize}
         modifiers={modifiers().widgetBackground('systemBackground')}
         spacing={2}
