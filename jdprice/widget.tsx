@@ -40,6 +40,8 @@ interface WidgetData {
   history: PriceEntry[]
   updatedAt: string
   updatedTs?: number
+  lastTryTs?: number
+  lastTryAt?: string
   imageUrl?: string
   imagePath?: string
   fromCache: boolean
@@ -70,6 +72,22 @@ function nextSlot(now: Date): Date {
 function isUpdateWindow(now: Date): boolean {
   const h = now.getHours()
   return h >= 9 && h < 22
+}
+
+// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
+// 比如现在 15:30，当前点就是今天 15:00；
+// 现在 10:00，当前点就是今天 9:00；
+// 现在 8:30，还没到今天 9:00，当前点就是昨天 21:00。
+function currentSlot(now: Date): Date {
+  const slots = [9, 15, 21]
+  let slot = -1
+  for (const h of slots) {
+    if (now.getHours() >= h) slot = h
+  }
+  const d = new Date(now)
+  if (slot === -1) d.setDate(d.getDate() - 1)
+  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  return d
 }
 
 function fmt(n: number): string {
@@ -355,6 +373,12 @@ function Footer({
     >
       最低 {data.low != null ? fmt(data.low) : '—'} · 最高{' '}
       {data.high != null ? fmt(data.high) : '—'} · {data.updatedAt}
+      {data.lastTryTs != null &&
+      data.updatedTs != null &&
+      data.lastTryTs > data.updatedTs &&
+      data.lastTryAt
+        ? ` · ${data.lastTryAt} 更新失败`
+        : ''}
     </Text>
   )
 }
@@ -540,9 +564,14 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-// 主流程：先读缓存；到更新点（9-22 点、距上次超过 6 小时）
+// 主流程：先读缓存；到更新点（9-22 点、当前这个更新点之后还没拉过）
 // 就自己拉一次新价，拉到了更新缓存，拉不到就显示旧缓存，
 // 绝不等、绝不转圈。最后告诉系统下一个更新点再跑一次。
+// 注意：这里不能用“距上次超过 6 小时”来判断——
+// 手动在 App 里点一次刷新，就会把 updatedTs 刷成现在，
+// 那 15:00 那个点一看“才过了 4 小时”就直接跳过，
+// 于是自动更新永远不跑（2026-11-22 15:00 就是这么错过的）。
+// 改成按更新点判断：只要上次更新在当前这个更新点之前，就拉。
 ;(async () => {
   const now = new Date()
   const cached = readCached()
@@ -550,7 +579,7 @@ function ErrorView({ message }: { message: string }) {
     !cached ||
     cached.price == null ||
     (isUpdateWindow(now) &&
-      (!cached.updatedTs || now.getTime() - cached.updatedTs >= 6 * 3600 * 1000))
+      (!cached.updatedTs || cached.updatedTs < currentSlot(now).getTime()))
   if (needFetch && cached) {
     // 有缓存时先拉，拉不到就用缓存顶上
     try {
@@ -575,6 +604,8 @@ function ErrorView({ message }: { message: string }) {
         history: kept,
         updatedAt: `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
         updatedTs: now.getTime(),
+        lastTryTs: undefined,
+        lastTryAt: undefined,
         fromCache: false,
         error: '',
       }
@@ -585,7 +616,16 @@ function ErrorView({ message }: { message: string }) {
       } as any)
       return
     } catch (e) {
-      // 拉失败了就显示旧缓存，不报错、不转圈
+      // 拉失败了就显示旧缓存，不报错、不转圈，
+      // 但把“这次尝试过、没拉到”记下来，底行会显示
+      // “15:00 更新失败”，下次就知道小组件到底跑没跑。
+      try {
+        const d = new Date()
+        const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
+        cached.lastTryTs = now.getTime()
+        cached.lastTryAt = `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+        saveCache(cached)
+      } catch (e2) {}
     }
   }
   if (cached && cached.price != null) {

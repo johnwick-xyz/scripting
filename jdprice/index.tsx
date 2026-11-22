@@ -21,6 +21,7 @@ const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
 const prefPath = Path.join(root, 'preference.json')
 const cachePath = Path.join(root, 'cache.json')
 const historyPath = Path.join(root, 'price_history.json')
+const imagePath = Path.join(root, 'product.jpg')
 
 const PRICE_URLS = (sku: string) => [
   `https://p.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
@@ -34,8 +35,11 @@ const BOXJS_URLS = [
 const DEFAULT_IMAGE_URL =
   'https://img10.360buyimg.com/img/jfs/t1/572241/19/12897/149428/6afed993F3dda89e5/008332032016639f.jpg'
 
-// 从商品页取第一张主图。失败也不影响价格，只是不换图。
-async function fetchImageUrl(sku: string, cookie: string): Promise<string> {
+// 从商品页一次取回主图链接和商品名。失败也不影响价格。
+async function fetchProductInfo(
+  sku: string,
+  cookie: string,
+): Promise<{ imageUrl: string; name: string }> {
   try {
     const headers: any = {
       'User-Agent':
@@ -51,8 +55,29 @@ async function fetchImageUrl(sku: string, cookie: string): Promise<string> {
         setTimeout(() => reject(new Error('商品页超时')), 10000),
       ),
     ])
-    const m = typeof text === 'string' ? text.match(/"imagePath":"([^"]+)"/) : null
-    if (m) return `https://img10.360buyimg.com/img/${m[1]}`
+    let imageUrl = ''
+    let name = ''
+    if (typeof text === 'string') {
+      const im = text.match(/"imagePath":"([^"]+)"/)
+      if (im) imageUrl = `https://img10.360buyimg.com/img/${im[1]}`
+      const nm = text.match(/"skuName":"([^"]+)"/)
+      if (nm) name = nm[1].split(' ')[0]
+    }
+    return { imageUrl, name }
+  } catch (e) {}
+  return { imageUrl: '', name: '' }
+}
+
+// 把商品图下载到本地文件。小组件里远程图经常加载失败
+// （之前右上角就是一个破图图标），本地文件才稳。
+async function downloadImage(url: string): Promise<string> {
+  if (!url) return ''
+  try {
+    const res = await fetch(url, { method: 'GET' })
+    const buf: ArrayBuffer = await res.arrayBuffer()
+    if (!buf || buf.byteLength < 1000) return ''
+    FileManager.writeAsBytesSync(imagePath, new Uint8Array(buf))
+    return imagePath
   } catch (e) {}
   return ''
 }
@@ -82,7 +107,19 @@ function isUpdateWindow(now: Date): boolean {
   return h >= 9 && h < 22
 }
 
-// 取价只在 App 里做（小组件里 fetch 一旦没反应就一直转圈）。
+// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
+function currentSlot(now: Date): Date {
+  const slots = [9, 15, 21]
+  let slot = -1
+  for (const h of slots) {
+    if (now.getHours() >= h) slot = h
+  }
+  const d = new Date(now)
+  if (slot === -1) d.setDate(d.getDate() - 1)
+  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  return d
+}
+
 // 这个商品要登录才能看价，带上京东 Cookie 再去拉。
 async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
   return Promise.race([
@@ -150,13 +187,17 @@ function App() {
   const [sku, setSku] = useState<string>('100244780555')
   const [name, setName] = useState<string>('西昊豆包椅L1')
   const [imageUrl, setImageUrl] = useState<string>('')
+  const [imageLocal, setImageLocal] = useState<string>('')
   const [cookie, setCookie] = useState<string>('')
   const [loaded, setLoaded] = useState(false)
   const [price, setPrice] = useState<string>('')
   const [status, setStatus] = useState<string>('打开 App 后自动拉价…')
 
   // auto=true 是打开 App 时自动拉，manual（点“刷新价格”）永远拉。
-  // 自动拉只在 9-22 点、且上次拉取超过 6 小时才拉。
+  // 自动拉只在 9-22 点、且上次拉取在当前这个更新点（9:00/15:00/21:00）
+  // 之前才拉。不能用“6 小时内已拉过”来判断——手动点一次刷新，
+  // updatedTs 就刷成现在，小组件到下一个更新点一看“才过 4 小时”
+  // 就直接跳过，自动更新就永远不跑（2026-11-22 15:00 就是这么错过的）。
   async function refresh(auto = false) {
     const now0 = new Date()
     if (auto) {
@@ -167,16 +208,16 @@ function App() {
       try {
         const cached: any = Storage.get('jd_price_cache', { shared: true })
         const ts = cached ? (typeof cached === 'string' ? JSON.parse(cached).updatedTs : cached.updatedTs) : null
-        if (ts && now0.getTime() - ts < 6 * 3600 * 1000) {
-          setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
+        if (ts && ts >= currentSlot(now0).getTime()) {
+          setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0))}`)
           return
         }
       } catch (e) {}
       try {
         if (FileManager.existsSync(cachePath)) {
           const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
-          if (cached.updatedTs && now0.getTime() - cached.updatedTs < 6 * 3600 * 1000) {
-            setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
+          if (cached.updatedTs && cached.updatedTs >= currentSlot(now0).getTime()) {
+            setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0))}`)
             return
           }
         }
@@ -195,9 +236,15 @@ function App() {
         }
       }
       const p = await fetchPrice(sku, ck)
-      let img = imageUrl
-      if (!img) img = await fetchImageUrl(sku, ck)
-      if (img) setImageUrl(img)
+      const info = await fetchProductInfo(sku, ck)
+      let img = info.imageUrl || imageUrl || DEFAULT_IMAGE_URL
+      let local = ''
+      if (info.imageUrl) local = await downloadImage(info.imageUrl)
+      if (!local && FileManager.existsSync(imagePath)) local = imagePath
+      const displayName = info.name || name || '京东商品'
+      setName(displayName)
+      setImageUrl(img)
+      setImageLocal(local)
       const now = Date.now()
       const d = new Date()
       const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
@@ -217,7 +264,7 @@ function App() {
       const kept = history.slice(-30)
       const prices = kept.map((x) => x.p)
       const data = {
-        name,
+        name: displayName,
         sku,
         price: p,
         prevPrice,
@@ -226,7 +273,8 @@ function App() {
         history: kept,
         updatedAt,
         updatedTs: now,
-        imageUrl: img || DEFAULT_IMAGE_URL,
+        imageUrl: img,
+        imagePath: local,
         fromCache: false,
         error: '',
       }
@@ -237,6 +285,8 @@ function App() {
       // 必须写进 Storage 的 shared 域，小组件才能读到。
       Storage.set('jd_price_cache', data, { shared: true })
       Storage.set('jd_price_history', kept, { shared: true })
+      Storage.set('jd_sku', sku, { shared: true })
+      if (ck) Storage.set('jd_cookie', ck, { shared: true })
       setPrice(p.toFixed(2))
       setStatus(`已更新：${updatedAt}，下次：${fmtSlot(nextSlot(new Date()))}`)
       Widget.reloadAll()
@@ -251,7 +301,6 @@ function App() {
         const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
         if (pref.sku) setSku(String(pref.sku))
         if (pref.name) setName(pref.name)
-        if (pref.imageUrl) setImageUrl(pref.imageUrl)
         if (pref.cookie) setCookie(pref.cookie)
       } catch (e) {
         console.error('Failed to parse preference', e)
@@ -261,10 +310,13 @@ function App() {
       try {
         const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
         if (cached.price != null) setPrice(Number(cached.price).toFixed(2))
+        if (cached.name) setName(cached.name)
         if (cached.imageUrl) setImageUrl(cached.imageUrl)
+        if (cached.imagePath) setImageLocal(cached.imagePath)
         if (cached.updatedAt) setStatus(`上次更新：${cached.updatedAt}`)
       } catch (e) {}
     }
+    if (FileManager.existsSync(imagePath)) setImageLocal(imagePath)
     setLoaded(true)
   }, [])
 
@@ -273,9 +325,13 @@ function App() {
     if (!FileManager.existsSync(root)) {
       FileManager.createDirectorySync(root, true)
     }
-    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, imageUrl, cookie }))
+    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, cookie }))
+    try {
+      Storage.set('jd_sku', sku, { shared: true })
+      if (cookie) Storage.set('jd_cookie', cookie, { shared: true })
+    } catch (e) {}
     Widget.reloadAll()
-  }, [sku, name, imageUrl, cookie, loaded])
+  }, [sku, name, cookie, loaded])
 
   // 设置加载完后自动拉一次价（按 9-22 点、每 6 小时那个规则）
   useEffect(() => {
@@ -288,7 +344,7 @@ function App() {
       <List navigationTitle="京东价格监控">
         <Section header={<Text>当前价格</Text>}>
           <HStack>
-            <Text>实时价</Text>
+            <Text>{name}</Text>
             <Text fontWeight="bold">¥{price || '—'}</Text>
           </HStack>
           <Text foregroundStyle="secondaryLabel">{status}</Text>
@@ -296,18 +352,18 @@ function App() {
         </Section>
         <Section header={<Text>商品图片</Text>}>
           <HStack>
-            <Image
-              imageUrl={imageUrl || DEFAULT_IMAGE_URL}
-              resizable
-              frame={{ width: 80, height: 80 }}
-            />
+            {imageLocal ? (
+              <Image filePath={imageLocal} resizable frame={{ width: 80, height: 80 }} />
+            ) : (
+              <Image
+                imageUrl={imageUrl || DEFAULT_IMAGE_URL}
+                resizable
+                frame={{ width: 80, height: 80 }}
+              />
+            )}
             <Text foregroundStyle="secondaryLabel">
-              小组件右边的图就是这张。换商品后打开 App 会自动去拉新图；这里也可以手动贴一张图片链接。
+              小组件右边的图就是这张，App 拉价时自动下载到本地。
             </Text>
-          </HStack>
-          <HStack>
-            <Text>图片链接</Text>
-            <TextField title="留空自动拉取" value={imageUrl} onChanged={setImageUrl} />
           </HStack>
         </Section>
         <Section header={<Text>商品</Text>}>
@@ -315,12 +371,8 @@ function App() {
             <Text>商品编号</Text>
             <TextField title="100244780555" value={sku} onChanged={setSku} />
           </HStack>
-          <HStack>
-            <Text>商品简称</Text>
-            <TextField title="西昊豆包椅L1" value={name} onChanged={setName} />
-          </HStack>
           <Text foregroundStyle="secondaryLabel">
-            编号就是京东链接里 item.jd.com/ 后面的数字。换商品只改编号和简称，不用改代码。
+            编号就是京东链接里 item.jd.com/ 后面的数字。换商品只改编号，商品名和图片会自动去拉，不用改代码。
           </Text>
         </Section>
         <Section header={<Text>京东 Cookie（这个商品要登录才能看价）</Text>}>
@@ -329,12 +381,12 @@ function App() {
             <SecureField title="粘贴京东 Cookie..." value={cookie} onChanged={setCookie} />
           </HStack>
           <Text foregroundStyle="secondaryLabel">
-            没登录的请求 p.3.cn 直接没反应。先手动粘贴一次就能用；也可以用 Loon 抓：装好 Jd.lpx 后，打开京东 App 刷一次商品页，Cookie 会自动写进 BoxJs，小组件会自动读，不用填这里。Cookie 不要发给别人，也不要提交到 GitHub。
+            没登录的请求 p.3.cn 直接没反应。先手动粘贴一次就能用；也可以用 Loon 抓：装好 Jd.lpx 后，打开京东 App 刷一次商品页，Cookie 会自动写进 BoxJs，小组件会自动读，不用填这里。Cookie 只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
         <Section header={<Text>说明</Text>}>
           <Text foregroundStyle="secondaryLabel">
-            小组件本身不联网，只读 App 存下来的缓存，所以预览秒出、绝不转圈。自动更新是 9-22 点、每 6 小时一次（9:00、15:00、21:00），打开 App 时按这个规则自动拉；点“刷新价格”随时都能手动拉。预览里如果还是旧的，点右上角“重新载入”再看一次。
+            小组件到更新点（9:00、15:00、21:00）会自己拉一次新价，用的是系统原生超时，拉不到就显示旧价格，不会转圈。打开 App 时也按 9-22 点、每 6 小时这个规则自动拉；点“刷新价格”随时都能手动拉。
           </Text>
         </Section>
         <Section>
