@@ -127,6 +127,10 @@ async function fetchBean(cookie: string): Promise<{
   nickname: string
   avatarUrl: string
   days: DayBean[]
+  // 明细那一步为什么没拿到数（'' = 拿到了），见 widget.tsx 里
+  // BeanData.detailError 的说明：之前是悄悄吞掉的，总数能显示、
+  // 今日却是 0，根本看不出是哪一步出的错。
+  detailError: string
 }> {
   const headers: any = {
     'User-Agent':
@@ -183,24 +187,41 @@ async function fetchBean(cookie: string): Promise<{
   }
   let page = 1
   let stop = false
+  let detailError = ''
   while (!stop && page <= 8) {
-    const res = await fetchWithTimeout(
-      'https://bean.m.jd.com/beanDetail/detail.json',
-      { method: 'POST', headers: detailHeaders, body: `page=${page}` },
-      8000,
-    )
+    let text = ''
+    try {
+      const res = await fetchWithTimeout(
+        'https://bean.m.jd.com/beanDetail/detail.json',
+        { method: 'POST', headers: detailHeaders, body: `page=${page}` },
+        8000,
+      )
+      text = await res.text()
+    } catch (e) {
+      // 明细这一步挂了也不能把总数也丢了：记下原因就停，
+      // 总数照样显示。
+      if (!detailError) detailError = '请求失败'
+      break
+    }
     // 明细接口 Cookie 失效时会返回 302 的 HTML 页面（不是 JSON），
     // 直接 res.json() 会抛 SyntaxError。这里先读文本、解析失败
-    // 就当这页没数据、停止翻页，京豆总数已经拿到手了照样能显示。
-    const text = await res.text()
+    // 就记下原因、停止翻页，京豆总数已经拿到手了照样能显示。
     let j: any = null
     try {
       j = text && text.trim() ? JSON.parse(text) : null
     } catch (e) {
+      if (!detailError) detailError = '非JSON'
       break
     }
-    const list = j && j.code === '0' && Array.isArray(j.jingDetailList) ? j.jingDetailList : []
-    if (list.length === 0) break
+    if (!j || j.code !== '0') {
+      if (!detailError) detailError = j && j.code != null ? `code=${j.code}` : '无返回'
+      break
+    }
+    const list = Array.isArray(j.jingDetailList) ? j.jingDetailList : []
+    if (list.length === 0) {
+      if (page === 1 && !detailError) detailError = '第1页0条'
+      break
+    }
     for (const item of list) {
       const dateStr = String(item.date || '').split(' ')[0]
       if (!dateStr || dateStr < startDate) {
@@ -215,7 +236,7 @@ async function fetchBean(cookie: string): Promise<{
     }
     page++
   }
-  return { total, nickname, avatarUrl, days }
+  return { total, nickname, avatarUrl, days, detailError }
 }
 
 function App() {
@@ -295,12 +316,16 @@ function App() {
         updatedTs: now,
         fromCache: false,
         error: '',
+        detailError: bean.detailError,
       }
       if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
       FileManager.writeAsStringSync(cachePath, JSON.stringify(data))
       Storage.set('jdbean_cache', data, { shared: true })
       if (ck) Storage.set('jd_cookie', ck, { shared: true })
-      setStatus(`已更新：${fmtTime(new Date())}，下次：${fmtSlot(nextSlot(new Date()))}`)
+      setStatus(
+        `已更新：${fmtTime(new Date())}，下次：${fmtSlot(nextSlot(new Date()))}` +
+          (bean.detailError ? `；明细：${bean.detailError}` : ''),
+      )
       Widget.reloadAll()
     } catch (e) {
       setStatus('拉取失败：' + String(e))
