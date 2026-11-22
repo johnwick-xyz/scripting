@@ -67,7 +67,17 @@ async function fetchWithTimeout(url: string, options: any, ms: number): Promise<
 
 async function fetchJsonWithTimeout(url: string, options: any, ms = 8000): Promise<any> {
   const res = await fetchWithTimeout(url, options, ms)
-  return res.json()
+  // 先读文本再解析：BoxJs 里没有这个 key、或 BoxJs 没起来时，
+  // 返回的可能不是 JSON（比如 "file not found" 之类的纯文本），
+  // 直接 res.json() 会抛 SyntaxError: Unexpected identifier "file"。
+  // 不是 JSON 就返回空，让调用方当成“没有这个 key”继续找下一个。
+  const text = await res.text()
+  if (!text || !text.trim()) return null
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    return null
+  }
 }
 
 async function getBoxJsCookie(url: string): Promise<string> {
@@ -115,9 +125,19 @@ async function fetchBean(cookie: string): Promise<{
     { method: 'GET', headers },
     8000,
   )
-  const info: any = await infoRes.json()
+  const infoText = await infoRes.text()
+  let info: any
+  try {
+    info = infoText && infoText.trim() ? JSON.parse(infoText) : null
+  } catch (e) {
+    throw new Error('用户信息接口返回的不是 JSON：' + (infoText || '').slice(0, 80))
+  }
   if (!info || info.retcode !== '0' || !info.data || !info.data.assetInfo) {
-    throw new Error('京豆总数拉取失败，Cookie 可能过期了')
+    throw new Error(
+      '京豆总数拉取失败' +
+        (info && info.msg ? '：' + info.msg : '') +
+        '，Cookie 可能过期了。注意：京豆接口必须登录才能拉，和价格那个不一样，价格不用 Cookie 也能拉。',
+    )
   }
   const total = Number(info.data.assetInfo.beanNum) || 0
   const nickname =
@@ -156,7 +176,16 @@ async function fetchBean(cookie: string): Promise<{
       { method: 'POST', headers: detailHeaders, body: `page=${page}` },
       8000,
     )
-    const j: any = await res.json()
+    // 明细接口 Cookie 失效时会返回 302 的 HTML 页面（不是 JSON），
+    // 直接 res.json() 会抛 SyntaxError。这里先读文本、解析失败
+    // 就当这页没数据、停止翻页，京豆总数已经拿到手了照样能显示。
+    const text = await res.text()
+    let j: any = null
+    try {
+      j = text && text.trim() ? JSON.parse(text) : null
+    } catch (e) {
+      break
+    }
     const list = j && j.code === '0' && Array.isArray(j.jingDetailList) ? j.jingDetailList : []
     if (list.length === 0) break
     for (const item of list) {
@@ -197,7 +226,16 @@ function App() {
       }
       try {
         const cached: any = Storage.get('jdbean_cache', { shared: true })
-        const ts = cached ? (typeof cached === 'string' ? JSON.parse(cached).updatedTs : cached.updatedTs) : null
+        let ts = null
+        try {
+          ts = cached
+            ? typeof cached === 'string'
+              ? JSON.parse(cached).updatedTs
+              : cached.updatedTs
+            : null
+        } catch (e) {
+          ts = null
+        }
         if (ts && now0.getTime() - ts < 6 * 3600 * 1000) {
           setStatus(`6小时内已拉过，下次：${fmtSlot(nextSlot(now0))}`)
           return
@@ -216,7 +254,10 @@ function App() {
           }
         }
       }
-      if (!ck) throw new Error('还没拿到 Cookie，先填 Cookie 或用 Loon 抓一次（和京东价格那个共用同一个）')
+      if (!ck)
+        throw new Error(
+          '还没拿到 Cookie。京豆接口必须登录才能拉，和价格那个不一样（价格不用 Cookie 也能拉）。先在下面“京东 Cookie”里粘贴一次，或用 Loon 装 Jd.lpx 抓一次。',
+        )
       const bean = await fetchBean(ck)
       let local = ''
       if (bean.avatarUrl) local = await downloadAvatar(bean.avatarUrl)

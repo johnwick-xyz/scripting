@@ -129,8 +129,19 @@ async function getCookie(): Promise<string> {
     'http://boxjs.com/query/data/@JD.cookie',
   ]) {
     try {
+      // 先读文本再解析：BoxJs 里没有这个 key、或 BoxJs 没起来时，
+      // 返回的可能不是 JSON（比如 "file not found" 之类的纯文本），
+      // 直接 res.json() 会抛 SyntaxError: Unexpected identifier "file"，
+      // 整个刷新就崩了。不是 JSON 就当这个 key 没有，继续找下一个。
       const res = await fetchWithTimeout(url, { method: 'GET' }, 3000)
-      const j: any = await res.json()
+      const text = await res.text()
+      if (!text || !text.trim()) continue
+      let j: any
+      try {
+        j = JSON.parse(text)
+      } catch (e) {
+        continue
+      }
       const v = j && (j.val || j.data || j.value)
       if (typeof v === 'string' && v.trim()) return v.trim()
       if (typeof j === 'string' && j.trim()) return j.trim()
@@ -151,9 +162,21 @@ async function fetchBean(cookie: string): Promise<BeanData> {
     { method: 'GET', headers },
     8000,
   )
-  const info: any = await infoRes.json()
+  const infoText = await infoRes.text()
+  let info: any
+  try {
+    info = JSON.parse(infoText)
+  } catch (e) {
+    throw new Error(
+      '用户信息接口返回的不是 JSON：' + (infoText || '').slice(0, 80),
+    )
+  }
   if (!info || info.retcode !== '0' || !info.data || !info.data.assetInfo) {
-    throw new Error('京豆总数拉取失败，Cookie 可能过期了')
+    throw new Error(
+      '京豆总数拉取失败' +
+        (info && info.msg ? '：' + info.msg : '') +
+        '，Cookie 可能过期了。注意：京豆接口必须登录才能拉，和价格那个不一样，价格不用 Cookie 也能拉。',
+    )
   }
   const total = Number(info.data.assetInfo.beanNum) || 0
   const nickname =
@@ -197,7 +220,17 @@ async function fetchBean(cookie: string): Promise<BeanData> {
       },
       8000,
     )
-    const j: any = await res.json()
+    // 明细接口 Cookie 失效时会返回 302 的 HTML 页面（不是 JSON），
+    // 直接 res.json() 会抛 SyntaxError，整个拉取就崩了。
+    // 这里先读文本、解析失败就当这页没数据、停止翻页，
+    // 京豆总数已经拿到手了，照样能显示，只是当天收支是空的。
+    const text = await res.text()
+    let j: any = null
+    try {
+      j = text && text.trim() ? JSON.parse(text) : null
+    } catch (e) {
+      break
+    }
     const list = j && j.code === '0' && Array.isArray(j.jingDetailList) ? j.jingDetailList : []
     if (list.length === 0) break
     for (const item of list) {
