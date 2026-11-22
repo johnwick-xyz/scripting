@@ -1,10 +1,12 @@
 #!name=京东 Cookie 抓取
-#!desc=打开京东 App 后，把 Cookie 写进 BoxJs，供 Scripting 京东价格监控小组件读取
+#!desc=打开京东 App 后，把 Cookie 写进 BoxJs，供 Scripting 京东价格监控、京东京豆小组件读取
 #!author=MJ
 
 [Script]
 http-request ^https://p\.3\.cn/prices/mgets tag=京东Cookie, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/jdprice/JdGetCookie.js, requires-body=false
 http-request ^https://item\.m\.jd\.com/product/ tag=京东Cookie, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/jdprice/JdGetCookie.js, requires-body=false
+http-request ^https://bean\.m\.jd\.com/beanDetail/detail\.json tag=京东Cookie, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/jdprice/JdGetCookie.js, requires-body=false
+http-request ^https://me-api\.jd\.com/user_new/info/GetJDUserInfoUnion tag=京东Cookie, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/jdprice/JdGetCookie.js, requires-body=false
 
 [MITM]
-hostname = p.3.cn, pm.3.cn, item.m.jd.com
+hostname = p.3.cn, pm.3.cn, item.m.jd.com, bean.m.jd.com, me-api.jd.com
