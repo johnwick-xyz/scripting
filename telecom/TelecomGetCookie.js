@@ -10,14 +10,22 @@ const KEY = 'telecom_cookie'
 const KEY_BOXJS = '@ChinaTelecom.10000.cookie'
 
 if (typeof $request !== 'undefined' && $request.headers) {
-  const cookie = $request.headers.Cookie || $request.headers.cookie
-  if (cookie && cookie.length > 20) {
-    const old = $persistentStore.read(KEY)
-    if (old !== cookie) {
-      $persistentStore.write(cookie, KEY)
-      $persistentStore.write(cookie, KEY_BOXJS)
-      $notification.post('电信 Cookie 已抓取', '', '小组件下次刷新就能用了')
+  // 登录跳转 loginMiddle 由 TelecomGetLoginUrl.js 处理，这里跳过，
+  // 免得登录前的 Cookie 盖掉已抓到的好 Cookie
+  if ($request.url && $request.url.indexOf('/user/loginMiddle') !== -1) {
+    $done({})
+  } else {
+    const cookie = $request.headers.Cookie || $request.headers.cookie
+    if (cookie && cookie.length > 20) {
+      const old = $persistentStore.read(KEY)
+      if (old !== cookie) {
+        $persistentStore.write(cookie, KEY)
+        $persistentStore.write(cookie, KEY_BOXJS)
+        $notification.post('电信 Cookie 已抓取', '', '小组件下次刷新就能用了')
+      }
     }
+    $done({})
   }
+} else {
+  $done({})
 }
-$done({})

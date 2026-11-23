@@ -29,6 +29,12 @@ import { rpt } from './utils'
 // 总量接口直接给了剩余和总量，百分比 = 剩余 / 总量 x 100，
 // 不用手动填套餐总量，也不会像联通那样缺 persent 默认 100%。
 // Cookie 在 App 里填（index.tsx），或 Loon 抓后由 BoxJs 提供。
+// 首选是登录地址法（GitHub 上 anker 的 ChinaTelecom_2024.js v2.3.1
+// 和 dompling 的 10000/index.js 用的办法）：Loon 拦截
+// https://e.dlife.cn/user/loginMiddle，把登录地址（去掉 &sign 之后）
+// 存进 BoxJs，小组件每次刷新先 GET 这个地址，读响应里的 Set-Cookie
+// 当 Cookie 用——每次都是新鲜的，不怕过期，也不用在 App 里抓 Cookie。
+// 登录地址抓不到时，再退回用存好的 Cookie。
 
 const DETAIL_URL = 'https://e.dlife.cn/user/package_detail.do'
 const BALANCE_URL = 'https://e.dlife.cn/user/balance.do'
@@ -37,14 +43,86 @@ const BOXJS_URLS = [
   'http://boxjs.com/query/data/@ChinaTelecom.10000.cookie',
   'http://boxjs.com/query/data/telecom_cookie',
 ]
+// Loon 抓登录地址写的两个 key，都查
+const LOGIN_URLS = [
+  'http://boxjs.com/query/data/telecom_login_url',
+  'http://boxjs.com/query/data/@ChinaTelecom.10000.loginUrl',
+]
 
-async function getBoxJsCookie(url: string): Promise<string> {
+async function getBoxJsValue(url: string): Promise<string> {
   try {
     const res = await fetch(url).then((r) => r.json())
     const v = res && (res.val || res.data || res.value)
-    if (typeof v === 'string' && v.trim()) return cleanCookie(v)
-    if (typeof res === 'string' && res.trim()) return cleanCookie(res)
+    if (typeof v === 'string' && v.trim()) return v.trim()
+    if (typeof res === 'string' && res.trim()) return res.trim()
   } catch (e) {}
+  return ''
+}
+
+async function getBoxJsCookie(url: string): Promise<string> {
+  const v = await getBoxJsValue(url)
+  return v ? cleanCookie(v) : ''
+}
+
+// 把 Set-Cookie 转成 Cookie：每条只取第一个 name=value 段
+function setCookiesToCookie(h: any): string {
+  const list: string[] = []
+  try {
+    const raw: string[] = typeof h?.getSetCookie === 'function' ? h.getSetCookie() : []
+    for (const s of raw) {
+      const first = String(s).split(';')[0].trim()
+      if (first) list.push(first)
+    }
+    if (list.length) return list.join('; ')
+    const single = h?.get ? h.get('set-cookie') : ''
+    if (single) {
+      // 多条 Set-Cookie 被逗号拼在一起时，按“逗号 + 名=”切分
+      //（Expires 里那个逗号后面跟的是日期，没有 =，不会被误切）
+      const parts = String(single).split(/,(?=[^;,=]+=[^;,]*)/)
+      for (const s of parts) {
+        const first = s.split(';')[0].trim()
+        if (first) list.push(first)
+      }
+    }
+  } catch (e) {}
+  return list.join('; ')
+}
+
+// 用登录地址换一个新鲜 Cookie（anker 的 updateCookie 办法）
+async function mintCookie(loginUrl: string): Promise<string> {
+  const tryFetch = async (init: any) => {
+    const res: any = await fetch(loginUrl, {
+      method: 'GET',
+      signal: AbortSignal.timeout(8000),
+      ...init,
+    })
+    return setCookiesToCookie(res.headers)
+  }
+  try {
+    const c = await tryFetch({ redirect: 'manual' })
+    if (c) return c
+  } catch (e) {}
+  try {
+    return await tryFetch({})
+  } catch (e) {}
+  return ''
+}
+
+async function getLoginUrl(): Promise<string> {
+  // 1. App 里填的登录地址（preference.json）
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.loginUrl) return String(pref.loginUrl).trim()
+    }
+  } catch (e) {}
+  // 2. BoxJs（Loon 抓到的登录地址）
+  for (const url of LOGIN_URLS) {
+    const v = await getBoxJsValue(url)
+    if (v) return v
+  }
   return ''
 }
 
@@ -443,7 +521,13 @@ function ErrorView({ message }: { message: string }) {
 }
 
 async function getCookie(): Promise<string> {
-  // 1. App 里填的 Cookie（preference.json）
+  // 1. 登录地址：每次换一个新鲜 Cookie（最稳，不怕过期）
+  const loginUrl = await getLoginUrl()
+  if (loginUrl) {
+    const fresh = await mintCookie(loginUrl)
+    if (fresh) return fresh
+  }
+  // 2. App 里填的 Cookie（preference.json）
   try {
     const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
     const prefPath = Path.join(root, 'preference.json')
@@ -452,7 +536,7 @@ async function getCookie(): Promise<string> {
       if (pref.cookie) return cleanCookie(pref.cookie)
     }
   } catch (e) {}
-  // 2. BoxJs（Loon 抓到的 Cookie）
+  // 3. BoxJs（Loon 抓到的 Cookie）
   for (const url of BOXJS_URLS) {
     const v = await getBoxJsCookie(url)
     if (v) return v
@@ -568,7 +652,7 @@ async function fetchData(cookie: string): Promise<WidgetData> {
     const cookie = await getCookie()
     if (!cookie) {
       Widget.present(
-        <ErrorView message="还没拿到 Cookie。先在 App 里填 Cookie，或用 Loon 抓一次中国电信 App 的 Cookie。" />,
+        <ErrorView message="还没拿到登录地址或 Cookie。Loon 装好 Telecom.lpx 后，Safari 打开 https://e.dlife.cn/index.do 登录一次；也可以先在 App 里填 Cookie。" />,
       )
       return
     }

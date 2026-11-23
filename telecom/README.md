@@ -19,8 +19,9 @@
 - `widget.tsx`：小组件本体，四个尺寸：小号 / 中号 / 大号 / 锁屏（圆形只显示流量 % 环，矩形显示话费和流量两行）
 - `index.tsx`：App 内设置页，手动填 Cookie
 - `utils.tsx`：`rpt` 换算
-- `TelecomGetCookie.js`：Loon 抓 Cookie 脚本（自己写的，拦截 `e.dlife.cn` 的请求头）
-- `Telecom.lpx`：Loon 插件，`script-path` 里填上面那个 JS 的 raw 地址
+- `TelecomGetLoginUrl.js`：Loon 抓登录地址脚本（拦截 `e.dlife.cn/user/loginMiddle`，存去掉 `&sign` 之后的地址）
+- `TelecomGetCookie.js`：Loon 抓 Cookie 脚本（拦截 `e.dlife.cn` 的请求头，备用）
+- `Telecom.lpx`：Loon 插件，上面两个 JS 的 raw 地址都填在里面了
 
 ## 安装
 
@@ -28,11 +29,17 @@ Scripting 里“导入远程脚本”，填这个文件夹的 GitHub 地址，�
 
 `https://github.com/johnwick-xyz/scripting/tree/main/telecom`
 
-## Cookie（后面用 Loon 获取）
+## 登录地址（首选，不怕过期）
 
-1. 把 `TelecomGetCookie.js` 传到 GitHub，拿到 raw 地址，填进 `Telecom.lpx` 的 `script-path`
-2. Loon 里启用这个插件
-3. 打开中国电信 App，刷一次首页或套餐页，收到“电信 Cookie 已抓取”的通知就好了
-4. 小组件会自动从 BoxJs 读 Cookie；没抓到之前也可以先在 App 设置页里手动粘贴 Cookie
+办法来自 GitHub 上 anker 的 `ChinaTelecom_2024.js` 和 dompling 的 `10000/index.js`：不直接存 Cookie，而是抓一个登录地址，小组件每次刷新用它换一个新鲜 Cookie。
 
-Cookie 过期后重新抓一次。Cookie 不要提交到 GitHub。
+1. 把 `TelecomGetLoginUrl.js` 和 `TelecomGetCookie.js` 都传到 GitHub（raw 地址已经填进 `Telecom.lpx` 了）
+2. Loon 里启用 `Telecom.lpx`
+3. Safari 打开 `https://e.dlife.cn/index.do` 登录一次，跳转经过 `loginMiddle` 时收到“电信登录地址已获取”就好了
+4. 小组件每次刷新自动用登录地址换新 Cookie；登录地址很久不用会失效，失效了重新登录抓一次
+
+登录页一直在转圈：先把 Loon 关掉再登录，登完开 Loon 刷新一次页面（走 Cookie 抓取兜底）；或先去 `www.189.cn` 登录，再回 `e.dlife.cn`。
+
+## Cookie（备用）
+
+没抓到登录地址之前，也可以先在 App 设置页里手动粘贴 Cookie；Loon 抓 Cookie 的规则也在 `Telecom.lpx` 里，打开中国电信 App 刷一次首页或套餐页就能抓到。Cookie 过期后重新抓一次。登录地址和 Cookie 都不要提交到 GitHub。
