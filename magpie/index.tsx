@@ -311,4 +311,5 @@ function App() {
 }
 
 Navigation.present({ element: <App /> })
-Script.exit()
+  .catch((err) => console.error(err))
+  .finally(() => Script.exit())
