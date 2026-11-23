@@ -317,22 +317,22 @@ function Header({ data, online, minimal }: { data: UsageData; online: boolean; m
   return (
     <HStack alignment="center" spacing={6}>
       <Text
-        font={{ size: 13, weight: 'bold' }}
+        font={13} fontWeight="bold"
         foregroundStyle="white"
         padding={minimal ? 3 : 5}
         background={{ shape: 'circle', style: 'rgba(17,17,17,1)' }}
       >
         M
       </Text>
-      <Text font={{ size: 14, weight: 'bold' }}>Magpie</Text>
+      <Text font={14} fontWeight="bold">Magpie</Text>
       {!minimal && (
-        <Text font={{ size: 11 }} foregroundStyle={online ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)'}>
+        <Text font={11} foregroundStyle={online ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)'}>
           {online ? '● 在线' : '● 离线'}
         </Text>
       )}
       <Spacer />
       {!minimal && (
-        <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+        <Text font={11} foregroundStyle="secondaryLabel">
           {periodLabel(data.period)}
         </Text>
       )}
@@ -343,11 +343,11 @@ function Header({ data, online, minimal }: { data: UsageData; online: boolean; m
 function StatCell({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <VStack alignment="leading" spacing={1}>
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+      <Text font={11} foregroundStyle="secondaryLabel">
         {label}
       </Text>
-      <Text font={{ size: 20, weight: 'bold' }}>{value}</Text>
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+      <Text font={20} fontWeight="bold">{value}</Text>
+      <Text font={11} foregroundStyle="secondaryLabel">
         {sub}
       </Text>
     </VStack>
@@ -359,12 +359,12 @@ function ModelRowView({ m, max, barW }: { m: ModelRow; max: number; barW: number
   return (
     <VStack alignment="leading" spacing={2}>
       <HStack alignment="center" spacing={4}>
-        <Text font={{ size: 12, weight: 'semibold' }}>{shortModelName(m.name)}</Text>
-        <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+        <Text font={12} fontWeight="semibold">{shortModelName(m.name)}</Text>
+        <Text font={11} foregroundStyle="secondaryLabel">
           {m.sub}
         </Text>
         <Spacer />
-        <Text font={{ size: 12 }}>{fmtNum(m.calls)} 次</Text>
+        <Text font={12}>{fmtNum(m.calls)} 次</Text>
       </HStack>
       <ZStack alignment="leading">
         <Capsule frame={{ width: barW, height: 5 }} fill="rgba(0,0,0,0.08)" />
@@ -407,12 +407,12 @@ function CompactView({ data }: { data: UsageData }) {
     >
       <Header data={data} online={online} minimal={isSmall} />
       <HStack alignment="center" spacing={4}>
-        <Text font={{ size: isSmall ? 24 : 30, weight: 'bold' }}>{fmtNum(data.calls)}</Text>
-        <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+        <Text font={isSmall ? 24 : 30} fontWeight="bold">{fmtNum(data.calls)}</Text>
+        <Text font={12} foregroundStyle="secondaryLabel">
           次请求
         </Text>
         {data.errors > 0 && (
-          <Text font={{ size: 12 }} foregroundStyle="rgba(239,68,68,1)">
+          <Text font={12} foregroundStyle="rgba(239,68,68,1)">
             失败 {data.errors}
           </Text>
         )}
@@ -420,53 +420,53 @@ function CompactView({ data }: { data: UsageData }) {
       {isSmall ? (
         <HStack alignment="center" spacing={4}>
           <HStack alignment="center" spacing={2}>
-            <Text font={{ size: 9 }} foregroundStyle="secondaryLabel">
+            <Text font={9} foregroundStyle="secondaryLabel">
               Token
             </Text>
-            <Text font={{ size: 9, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+            <Text font={9} fontWeight="semibold">{fmtTokens(data.tokens)}</Text>
           </HStack>
           <HStack alignment="center" spacing={2}>
-            <Text font={{ size: 9 }} foregroundStyle="secondaryLabel">
+            <Text font={9} foregroundStyle="secondaryLabel">
               费用
             </Text>
-            <Text font={{ size: 9, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+            <Text font={9} fontWeight="semibold">{fmtCost(data.cost)}</Text>
           </HStack>
         </HStack>
       ) : (
         <HStack alignment="center" spacing={12}>
           <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+            <Text font={12} foregroundStyle="secondaryLabel">
               Token
             </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+            <Text font={12} fontWeight="semibold">{fmtTokens(data.tokens)}</Text>
           </HStack>
           <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+            <Text font={12} foregroundStyle="secondaryLabel">
               费用
             </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+            <Text font={12} fontWeight="semibold">{fmtCost(data.cost)}</Text>
           </HStack>
         </HStack>
       )}
       {data.topModel &&
         (isSmall ? (
           <VStack alignment="leading" spacing={1}>
-            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+            <Text font={10} foregroundStyle="secondaryLabel">
               {modelLines[0]}
             </Text>
             {modelLines[1] ? (
-              <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+              <Text font={10} foregroundStyle="secondaryLabel">
                 {modelLines[1]}
               </Text>
             ) : null}
           </VStack>
         ) : (
-          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+          <Text font={12} foregroundStyle="secondaryLabel">
             最多：{shortModelName(data.topModel.name)} · {fmtNum(data.topModel.calls)} 次
           </Text>
         ))}
       <Spacer />
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+      <Text font={11} foregroundStyle="secondaryLabel">
         {data.updatedAt ? `${data.updatedAt} 更新` : '暂无数据'}
         {data.error ? ` · ${data.error}` : ''}
       </Text>
@@ -500,12 +500,12 @@ function LargeView({ data }: { data: UsageData }) {
         <ModelRowView key={i} m={m} max={data.models[0] ? data.models[0].calls : 1} barW={Widget.displaySize.width - 40} />
       ))}
       {data.topAgent && (
-        <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+        <Text font={12} foregroundStyle="secondaryLabel">
           最活跃：{data.topAgent.name} · {fmtNum(data.topAgent.calls)} 次
         </Text>
       )}
       <Spacer />
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+      <Text font={11} foregroundStyle="secondaryLabel">
         {data.updatedAt ? `${data.updatedAt} 更新` : '暂无数据'}
         {data.error ? ` · ${data.error}` : ''}
       </Text>
@@ -516,8 +516,8 @@ function LargeView({ data }: { data: UsageData }) {
 function LockCircularView({ data }: { data: UsageData }) {
   return (
     <VStack alignment="center" spacing={1} padding={8}>
-      <Text font={{ size: 26, weight: 'bold' }}>{fmtTokens(data.tokens)}</Text>
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+      <Text font={26} fontWeight="bold">{fmtTokens(data.tokens)}</Text>
+      <Text font={11} foregroundStyle="secondaryLabel">
         Token
       </Text>
     </VStack>
@@ -527,8 +527,8 @@ function LockCircularView({ data }: { data: UsageData }) {
 function LockRectangularView({ data }: { data: UsageData }) {
   return (
     <VStack alignment="leading" spacing={2} padding={{ horizontal: 12, vertical: 8 }}>
-      <Text font={{ size: 13, weight: 'bold' }}>Magpie · {periodLabel(data.period)}</Text>
-      <Text font={{ size: 12 }}>
+      <Text font={13} fontWeight="bold">Magpie · {periodLabel(data.period)}</Text>
+      <Text font={12}>
         {fmtNum(data.calls)} 次请求 · {fmtCost(data.cost)}
       </Text>
     </VStack>
