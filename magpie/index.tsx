@@ -1,7 +1,9 @@
 import {
   Button,
   HStack,
+  List,
   Navigation,
+  NavigationStack,
   Script,
   Section,
   Spacer,
@@ -237,76 +239,78 @@ function App() {
   }
 
   return (
-    <VStack>
-      <Section header="用量">
-        {data ? (
-          <VStack alignment="leading" spacing={6}>
-            <HStack>
-              <Text>{periodLabel(data.period)}请求</Text>
-              <Spacer />
-              <Text font={{ weight: 'bold' }}>{fmtNum(data.calls)} 次</Text>
-            </HStack>
-            <HStack>
-              <Text>Token</Text>
-              <Spacer />
-              <Text font={{ weight: 'bold' }}>{fmtTokens(data.tokens)}</Text>
-            </HStack>
-            <HStack>
-              <Text>费用</Text>
-              <Spacer />
-              <Text font={{ weight: 'bold' }}>{fmtCost(data.cost)}</Text>
-            </HStack>
-            {data.topModel && (
+    <NavigationStack>
+      <List navigationTitle="Magpie">
+        <Section header="用量">
+          {data ? (
+            <VStack alignment="leading" spacing={6}>
               <HStack>
-                <Text>用的最多</Text>
+                <Text>{periodLabel(data.period)}请求</Text>
                 <Spacer />
-                <Text>
-                  {data.topModel.name} · {fmtNum(data.topModel.calls)} 次
-                </Text>
+                <Text font={{ weight: 'bold' }}>{fmtNum(data.calls)} 次</Text>
               </HStack>
-            )}
-            {data.errors > 0 && (
               <HStack>
-                <Text>失败</Text>
+                <Text>Token</Text>
                 <Spacer />
-                <Text foregroundStyle="red">{data.errors} 次</Text>
+                <Text font={{ weight: 'bold' }}>{fmtTokens(data.tokens)}</Text>
               </HStack>
-            )}
-            <Text foregroundStyle="secondaryLabel">{status}</Text>
-            <Button title="刷新用量" onTap={() => refresh(false)} />
-          </VStack>
-        ) : (
-          <VStack alignment="leading" spacing={6}>
-            <Text foregroundStyle="secondaryLabel">{status}</Text>
-            <Button title="刷新用量" onTap={() => refresh(false)} />
-          </VStack>
-        )}
-      </Section>
-      <Section header="设置">
-        <TextField title="服务器地址，如 http://192.168.1.20:3425" value={base} onChanged={setBase} />
-        <TextField title="网关 Key（只读 Key 就够）" value={key} onChanged={setKey} />
-        <HStack>
-          <Text>统计周期</Text>
-          <Spacer />
-          {periodButton('today', '今日')}
-          {periodButton('week', '本周')}
-          {periodButton('month', '本月')}
-        </HStack>
-        <Text foregroundStyle="secondaryLabel">
-          地址填服务器在局域网的地址 + 3425 端口（不是 3430 网页那个）。网关 Key
-          只存在手机本地，不会上传云端，也不要提交到 GitHub。
-        </Text>
-      </Section>
-      <Section header="怎么用">
-        <Text foregroundStyle="secondaryLabel">
-          服务器那边要先做两件事，不然手机连上也是 403：1）Web UI → Settings → Network and
-          sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
-          Gateway keys 里建，或在服务器上 docker exec magpie magpie gateway-key add widget
-          --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。手机要和服务器在同一个局域网（同一
-          Wi-Fi）。小组件每 15 分钟刷新一次，缓存超过 10 分钟才重新拉。
-        </Text>
-      </Section>
-    </VStack>
+              <HStack>
+                <Text>费用</Text>
+                <Spacer />
+                <Text font={{ weight: 'bold' }}>{fmtCost(data.cost)}</Text>
+              </HStack>
+              {data.topModel && (
+                <HStack>
+                  <Text>用的最多</Text>
+                  <Spacer />
+                  <Text>
+                    {data.topModel.name} · {fmtNum(data.topModel.calls)} 次
+                  </Text>
+                </HStack>
+              )}
+              {data.errors > 0 && (
+                <HStack>
+                  <Text>失败</Text>
+                  <Spacer />
+                  <Text foregroundStyle="red">{data.errors} 次</Text>
+                </HStack>
+              )}
+              <Text foregroundStyle="secondaryLabel">{status}</Text>
+              <Button title="刷新用量" onTap={() => refresh(false)} />
+            </VStack>
+          ) : (
+            <VStack alignment="leading" spacing={6}>
+              <Text foregroundStyle="secondaryLabel">{status}</Text>
+              <Button title="刷新用量" onTap={() => refresh(false)} />
+            </VStack>
+          )}
+        </Section>
+        <Section header="设置">
+          <TextField title="服务器地址，如 http://192.168.1.20:3425" value={base} onChanged={setBase} />
+          <TextField title="网关 Key（只读 Key 就够）" value={key} onChanged={setKey} />
+          <HStack>
+            <Text>统计周期</Text>
+            <Spacer />
+            {periodButton('today', '今日')}
+            {periodButton('week', '本周')}
+            {periodButton('month', '本月')}
+          </HStack>
+          <Text foregroundStyle="secondaryLabel">
+            地址填服务器在局域网的地址 + 3425 端口（不是 3430 网页那个）。网关 Key
+            只存在手机本地，不会上传云端，也不要提交到 GitHub。
+          </Text>
+        </Section>
+        <Section header="怎么用">
+          <Text foregroundStyle="secondaryLabel">
+            服务器那边要先做两件事，不然手机连上也是 403：1）Web UI → Settings → Network and
+            sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
+            Gateway keys 里建，或在服务器上 docker exec magpie magpie gateway-key add widget
+            --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。手机要和服务器在同一个局域网（同一
+            Wi-Fi）。小组件每 15 分钟刷新一次，缓存超过 10 分钟才重新拉。
+          </Text>
+        </Section>
+      </List>
+    </NavigationStack>
   )
 }
 
