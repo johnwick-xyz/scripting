@@ -392,24 +392,41 @@ function CompactView({ data }: { data: UsageData }) {
           </Text>
         )}
       </HStack>
-      <HStack alignment="center" spacing={12}>
-        <HStack alignment="center" spacing={3}>
-          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-            Token
-          </Text>
-          <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+      {isSmall ? (
+        <VStack alignment="leading" spacing={2}>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              Token
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+          </HStack>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              费用
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+          </HStack>
+        </VStack>
+      ) : (
+        <HStack alignment="center" spacing={12}>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              Token
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+          </HStack>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              费用
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+          </HStack>
         </HStack>
-        <HStack alignment="center" spacing={3}>
-          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-            费用
-          </Text>
-          <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
-        </HStack>
-      </HStack>
+      )}
       {data.topModel && (
-        <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel" minScaleFactor={0.8}>
+        <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel" minScaleFactor={0.75}>
           {isSmall
-            ? `最多：${shortModelName(data.topModel.name)}`
+            ? shortModelName(data.topModel.name)
             : `最多：${shortModelName(data.topModel.name)} · ${fmtNum(data.topModel.calls)} 次`}
         </Text>
       )}
