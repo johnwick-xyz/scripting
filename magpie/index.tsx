@@ -312,6 +312,9 @@ function App() {
             Wi-Fi）。小组件每 15 分钟刷新一次，缓存超过 10 分钟才重新拉。
           </Text>
         </Section>
+        <Section>
+          <Button title="预览小组件" action={() => Widget.preview()} />
+        </Section>
       </List>
     </NavigationStack>
   )
