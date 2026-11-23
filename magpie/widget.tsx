@@ -403,7 +403,7 @@ function CompactView({ data }: { data: UsageData }) {
     <VStack
       alignment="leading"
       spacing={isSmall ? 2 : 6}
-      padding={{ horizontal: 12, vertical: isSmall ? 4 : 8 }}
+      padding={{ horizontal: 12, vertical: 8 }}
     >
       <Header data={data} online={online} minimal={isSmall} />
       <HStack alignment="center" spacing={4}>
@@ -418,18 +418,18 @@ function CompactView({ data }: { data: UsageData }) {
         )}
       </HStack>
       {isSmall ? (
-        <HStack alignment="center" spacing={6}>
+        <HStack alignment="center" spacing={4}>
           <HStack alignment="center" spacing={2}>
-            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+            <Text font={{ size: 9 }} foregroundStyle="secondaryLabel">
               Token
             </Text>
-            <Text font={{ size: 10, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+            <Text font={{ size: 9, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
           </HStack>
           <HStack alignment="center" spacing={2}>
-            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+            <Text font={{ size: 9 }} foregroundStyle="secondaryLabel">
               费用
             </Text>
-            <Text font={{ size: 10, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+            <Text font={{ size: 9, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
           </HStack>
         </HStack>
       ) : (
