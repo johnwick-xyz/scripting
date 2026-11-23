@@ -230,7 +230,7 @@ function App() {
     return (
       <Button
         title={label}
-        onTap={() => {
+        action={() => {
           setPeriod(p)
           refresh(false, base, key, p)
         }}
@@ -241,53 +241,56 @@ function App() {
   return (
     <NavigationStack>
       <List navigationTitle="Magpie">
-        <Section header="用量">
-          {data ? (
-            <VStack alignment="leading" spacing={6}>
-              <HStack>
-                <Text>{periodLabel(data.period)}请求</Text>
-                <Spacer />
-                <Text font={{ weight: 'bold' }}>{fmtNum(data.calls)} 次</Text>
-              </HStack>
-              <HStack>
-                <Text>Token</Text>
-                <Spacer />
-                <Text font={{ weight: 'bold' }}>{fmtTokens(data.tokens)}</Text>
-              </HStack>
-              <HStack>
-                <Text>费用</Text>
-                <Spacer />
-                <Text font={{ weight: 'bold' }}>{fmtCost(data.cost)}</Text>
-              </HStack>
-              {data.topModel && (
-                <HStack>
-                  <Text>用的最多</Text>
-                  <Spacer />
-                  <Text>
-                    {data.topModel.name} · {fmtNum(data.topModel.calls)} 次
-                  </Text>
-                </HStack>
-              )}
-              {data.errors > 0 && (
-                <HStack>
-                  <Text>失败</Text>
-                  <Spacer />
-                  <Text foregroundStyle="red">{data.errors} 次</Text>
-                </HStack>
-              )}
-              <Text foregroundStyle="secondaryLabel">{status}</Text>
-              <Button title="刷新用量" onTap={() => refresh(false)} />
-            </VStack>
-          ) : (
-            <VStack alignment="leading" spacing={6}>
-              <Text foregroundStyle="secondaryLabel">{status}</Text>
-              <Button title="刷新用量" onTap={() => refresh(false)} />
-            </VStack>
+        <Section header={<Text>用量</Text>}>
+          {data && (
+            <HStack>
+              <Text>{periodLabel(data.period)}请求</Text>
+              <Spacer />
+              <Text fontWeight="bold">{fmtNum(data.calls)} 次</Text>
+            </HStack>
           )}
+          {data && (
+            <HStack>
+              <Text>Token</Text>
+              <Spacer />
+              <Text fontWeight="bold">{fmtTokens(data.tokens)}</Text>
+            </HStack>
+          )}
+          {data && (
+            <HStack>
+              <Text>费用</Text>
+              <Spacer />
+              <Text fontWeight="bold">{fmtCost(data.cost)}</Text>
+            </HStack>
+          )}
+          {data && data.topModel && (
+            <HStack>
+              <Text>用的最多</Text>
+              <Spacer />
+              <Text>
+                {data.topModel.name} · {fmtNum(data.topModel.calls)} 次
+              </Text>
+            </HStack>
+          )}
+          {data && data.errors > 0 && (
+            <HStack>
+              <Text>失败</Text>
+              <Spacer />
+              <Text foregroundStyle="red">{data.errors} 次</Text>
+            </HStack>
+          )}
+          <Text foregroundStyle="secondaryLabel">{status}</Text>
+          <Button title="刷新用量" action={() => refresh(false)} />
         </Section>
-        <Section header="设置">
-          <TextField title="服务器地址，如 http://192.168.1.20:3425" value={base} onChanged={setBase} />
-          <TextField title="网关 Key（只读 Key 就够）" value={key} onChanged={setKey} />
+        <Section header={<Text>设置</Text>}>
+          <HStack>
+            <Text>服务器地址</Text>
+            <TextField title="如 http://192.168.1.20:3425" value={base} onChanged={setBase} />
+          </HStack>
+          <HStack>
+            <Text>网关 Key</Text>
+            <TextField title="只读 Key 就够" value={key} onChanged={setKey} />
+          </HStack>
           <HStack>
             <Text>统计周期</Text>
             <Spacer />
@@ -300,7 +303,7 @@ function App() {
             只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
-        <Section header="怎么用">
+        <Section header={<Text>怎么用</Text>}>
           <Text foregroundStyle="secondaryLabel">
             服务器那边要先做两件事，不然手机连上也是 403：1）Web UI → Settings → Network and
             sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
