@@ -15,7 +15,7 @@ import {
   useEffect,
   useState,
 } from 'scripting'
-import { fmtTimeShort, fmtTokens, fmtCost, fmtNum } from './utils'
+import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum } from './utils'
 
 // Magpie 设置页（App 内打开）
 // 填服务器地址和网关 Key，选周期，点“刷新用量”手动拉一次。
@@ -37,7 +37,31 @@ const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
 const FETCH_TIMEOUT = 8000
-const STALE_MS = 10 * 60 * 1000
+
+// 自动更新：每天 9–22 点，每小时整点更新一次（和小组件一样的整点时段制）。
+function currentSlot(now: Date): Date {
+  const s = new Date(now)
+  const h = s.getHours()
+  s.setMinutes(0, 0, 0)
+  if (h < 9) {
+    s.setDate(s.getDate() - 1)
+    s.setHours(22, 0, 0, 0)
+  } else if (h > 22) {
+    s.setHours(22, 0, 0, 0)
+  }
+  return s
+}
+
+function nextSlot(now: Date): Date {
+  const s = new Date(now)
+  const h = s.getHours()
+  if (h < 9) s.setHours(9, 0, 0, 0)
+  else if (h >= 22) {
+    s.setDate(s.getDate() + 1)
+    s.setHours(9, 0, 0, 0)
+  } else s.setHours(h + 1, 0, 0, 0)
+  return s
+}
 
 interface ModelRow {
   name: string
@@ -209,9 +233,9 @@ function App() {
     if (auto) {
       try {
         const cached: any = Storage.get(CACHE_KEY, { shared: true })
-        if (cached && cached.updatedTs && Date.now() - cached.updatedTs < STALE_MS) {
+        if (cached && cached.updatedTs && cached.updatedTs >= currentSlot(new Date()).getTime()) {
           setData({ ...cached, fromCache: true })
-          setStatus(`已更新：${cached.updatedAt}（缓存，未到 10 分钟）`)
+          setStatus(`已更新：${cached.updatedAt}（缓存），下次 ${fmtTime(nextSlot(new Date()))}`)
           return
         }
       } catch (e) {}
@@ -229,7 +253,7 @@ function App() {
         FileManager.writeString(dir + '/' + CACHE_FILE, JSON.stringify(fresh))
       } catch (e) {}
       Widget.reloadAll()
-      setStatus(`已更新：${fresh.updatedAt}`)
+      setStatus(`已更新：${fresh.updatedAt}，下次 ${fmtTime(nextSlot(new Date()))}`)
     } catch (e: any) {
       setStatus(e && e.message ? e.message : '拉取失败')
     }
@@ -319,8 +343,8 @@ function App() {
             sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
             Gateway keys 里建，或在服务器上 docker exec magpie magpie gateway-key add widget
             --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。在家同一 Wi-Fi
-            就填局域网 IP + 3425，远程就填 WorkBuddy 那个地址 + 3430，两个端口都能拉用量。小组件每 15
-            分钟刷新一次，缓存超过 10 分钟才重新拉。
+            就填局域网 IP + 3425，远程就填 WorkBuddy 那个地址 + 3430，两个端口都能拉用量。小组件每天 9–22
+            点每小时自动更新一次。
           </Text>
         </Section>
         <Section>

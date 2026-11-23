@@ -42,7 +42,37 @@ const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
 const FETCH_TIMEOUT = 8000
-const STALE_MS = 10 * 60 * 1000 // 缓存超过 10 分钟才重新拉
+// 自动更新：每天 9–22 点，每小时整点更新一次（和京东那两个一样，
+// 按整点时段算：上次更新在当前整点之前才拉，手动刷新不影响下一个整点）。
+function currentSlot(now: Date): Date {
+  const s = new Date(now)
+  const h = s.getHours()
+  s.setMinutes(0, 0, 0)
+  if (h < 9) {
+    s.setDate(s.getDate() - 1)
+    s.setHours(22, 0, 0, 0)
+  } else if (h > 22) {
+    s.setHours(22, 0, 0, 0)
+  }
+  return s
+}
+
+function nextSlot(now: Date): Date {
+  const s = new Date(now)
+  const h = s.getHours()
+  if (h < 9) s.setHours(9, 0, 0, 0)
+  else if (h >= 22) {
+    s.setDate(s.getDate() + 1)
+    s.setHours(9, 0, 0, 0)
+  } else s.setHours(h + 1, 0, 0, 0)
+  return s
+}
+
+// 模型名只留最后一段：nvidia/llama-3.3-70b-instruct -> llama-3.3-70b-instruct
+function shortModelName(name: string): string {
+  const i = name.lastIndexOf('/')
+  return i >= 0 ? name.slice(i + 1) : name
+}
 
 interface ModelRow {
   name: string
@@ -266,8 +296,9 @@ async function loadData(): Promise<{ data: UsageData; cfg: Config }> {
     const d = cached || emptyData(cfg.period)
     return { data: { ...d, error: '还没填网关 Key' }, cfg }
   }
-  const stale = !cached || !cached.updatedTs || Date.now() - cached.updatedTs > STALE_MS
-  if (!stale && cached) return { data: cached, cfg }
+  // 整点时段制：上次更新在当前整点之前才拉
+  const slot = currentSlot(new Date()).getTime()
+  if (cached && cached.updatedTs && cached.updatedTs >= slot) return { data: cached, cfg }
   try {
     const fresh = await fetchUsage(cfg.base, cfg.key, cfg.period)
     try {
@@ -282,7 +313,7 @@ async function loadData(): Promise<{ data: UsageData; cfg: Config }> {
 
 // ---- 视图 ----
 
-function Header({ data, online }: { data: UsageData; online: boolean }) {
+function Header({ data, online, minimal }: { data: UsageData; online: boolean; minimal?: boolean }) {
   return (
     <HStack alignment="center" spacing={6}>
       <Text
@@ -294,13 +325,17 @@ function Header({ data, online }: { data: UsageData; online: boolean }) {
         M
       </Text>
       <Text font={{ size: 14, weight: 'bold' }}>Magpie</Text>
-      <Text font={{ size: 11 }} foregroundStyle={online ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)'}>
-        {online ? '● 在线' : '● 离线'}
-      </Text>
+      {!minimal && (
+        <Text font={{ size: 11 }} foregroundStyle={online ? 'rgba(34,197,94,1)' : 'rgba(239,68,68,1)'}>
+          {online ? '● 在线' : '● 离线'}
+        </Text>
+      )}
       <Spacer />
-      <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
-        {periodLabel(data.period)}
-      </Text>
+      {!minimal && (
+        <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
+          {periodLabel(data.period)}
+        </Text>
+      )}
     </HStack>
   )
 }
@@ -324,7 +359,7 @@ function ModelRowView({ m, max, barW }: { m: ModelRow; max: number; barW: number
   return (
     <VStack alignment="leading" spacing={2}>
       <HStack alignment="center" spacing={4}>
-        <Text font={{ size: 12, weight: 'semibold' }}>{m.name}</Text>
+        <Text font={{ size: 12, weight: 'semibold' }}>{shortModelName(m.name)}</Text>
         <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
           {m.sub}
         </Text>
@@ -345,7 +380,7 @@ function CompactView({ data }: { data: UsageData }) {
   const isSmall = Widget.family === 'systemSmall' || (!Widget.family && W < 200)
   return (
     <VStack alignment="leading" spacing={isSmall ? 4 : 6} padding={{ horizontal: 12, vertical: 8 }}>
-      <Header data={data} online={online} />
+      <Header data={data} online={online} minimal={isSmall} />
       <HStack alignment="center" spacing={4}>
         <Text font={{ size: isSmall ? 26 : 30, weight: 'bold' }}>{fmtNum(data.calls)}</Text>
         <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
@@ -358,16 +393,24 @@ function CompactView({ data }: { data: UsageData }) {
         )}
       </HStack>
       <HStack alignment="center" spacing={12}>
-        <Text font={{ size: 12 }}>
-          Token <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
-        </Text>
-        <Text font={{ size: 12 }}>
-          费用 <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
-        </Text>
+        <HStack alignment="center" spacing={3}>
+          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+            Token
+          </Text>
+          <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+        </HStack>
+        <HStack alignment="center" spacing={3}>
+          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+            费用
+          </Text>
+          <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+        </HStack>
       </HStack>
       {data.topModel && (
-        <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-          最多：{data.topModel.name} · {fmtNum(data.topModel.calls)} 次
+        <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel" minScaleFactor={0.8}>
+          {isSmall
+            ? `最多：${shortModelName(data.topModel.name)}`
+            : `最多：${shortModelName(data.topModel.name)} · ${fmtNum(data.topModel.calls)} 次`}
         </Text>
       )}
       <Spacer />
@@ -452,7 +495,7 @@ function LockRectangularView({ data }: { data: UsageData }) {
   Widget.present(view, {
     reloadPolicy: {
       policy: 'after',
-      date: new Date(Date.now() + 15 * 60 * 1000),
+      date: nextSlot(new Date()),
     },
   })
 })()
