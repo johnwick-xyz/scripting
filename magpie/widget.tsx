@@ -138,12 +138,12 @@ function periodLabel(p: string): string {
 }
 
 async function fetchUsage(base: string, key: string, period: string): Promise<UsageData> {
-  const url = `${base}/v1/magpie/usage?period=${period}`
+  const url = `${base.trim().replace(/\/$/, '')}/v1/magpie/usage?period=${period}`
   let res: any
   try {
     res = await fetchWithTimeout(
       url,
-      { headers: { Authorization: 'Bearer ' + key, Accept: 'application/json' } },
+      { headers: { Authorization: 'Bearer ' + key.trim(), Accept: 'application/json' } },
       FETCH_TIMEOUT,
     )
   } catch (e) {
