@@ -137,8 +137,20 @@ function periodLabel(p: string): string {
   return '今日'
 }
 
+function normalizeBase(b: string): string {
+  let s = b.trim()
+  const q = s.search(/[?#]/)
+  if (q >= 0) s = s.slice(0, q)
+  const m = s.match(/^(https?:\/\/[^/]+)(\/.*)?$/)
+  if (m) s = m[1]
+  return s.replace(/\/$/, '')
+}
+
 async function fetchUsage(base: string, key: string, period: string): Promise<UsageData> {
-  const url = `${base.trim().replace(/\/$/, '')}/v1/magpie/usage?period=${period}`
+  // 地址栏只认 scheme://host:port：如果粘贴了网页带 ?k= 的完整网址，
+  // 把 ?k=、# 和后面的路径都去掉，不然拼出来的 /v1/magpie/usage 请求不到正确位置。
+  const url =
+    normalizeBase(base) + `/v1/magpie/usage?period=${period}`
   let res: any
   try {
     res = await fetchWithTimeout(

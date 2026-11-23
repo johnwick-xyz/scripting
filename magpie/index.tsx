@@ -73,8 +73,17 @@ function periodLabel(p: string): string {
   return '今日'
 }
 
+function normalizeBase(b: string): string {
+  let s = b.trim()
+  const q = s.search(/[?#]/)
+  if (q >= 0) s = s.slice(0, q)
+  const m = s.match(/^(https?:\/\/[^/]+)(\/.*)?$/)
+  if (m) s = m[1]
+  return s.replace(/\/$/, '')
+}
+
 async function fetchUsage(base: string, key: string, period: string): Promise<UsageData> {
-  const url = `${base.trim().replace(/\/$/, '')}/v1/magpie/usage?period=${period}`
+  const url = normalizeBase(base) + `/v1/magpie/usage?period=${period}`
   let res: any
   try {
     res = await fetchWithTimeout(
