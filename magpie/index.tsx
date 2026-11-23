@@ -299,7 +299,8 @@ function App() {
             {periodButton('month', '本月')}
           </HStack>
           <Text foregroundStyle="secondaryLabel">
-            地址填服务器在局域网的地址 + 3425 端口（不是 3430 网页那个）。网关 Key
+            填手机能直接访问的那个地址：在家同一 Wi-Fi 就填局域网 IP + 3425 端口；远程就填
+            WorkBuddy 里用的那个地址 + 3430 端口。两个端口都能拉用量。网关 Key
             只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
@@ -308,8 +309,9 @@ function App() {
             服务器那边要先做两件事，不然手机连上也是 403：1）Web UI → Settings → Network and
             sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
             Gateway keys 里建，或在服务器上 docker exec magpie magpie gateway-key add widget
-            --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。手机要和服务器在同一个局域网（同一
-            Wi-Fi）。小组件每 15 分钟刷新一次，缓存超过 10 分钟才重新拉。
+            --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。在家同一 Wi-Fi
+            就填局域网 IP + 3425，远程就填 WorkBuddy 那个地址 + 3430，两个端口都能拉用量。小组件每 15
+            分钟刷新一次，缓存超过 10 分钟才重新拉。
           </Text>
         </Section>
         <Section>
