@@ -379,10 +379,14 @@ function CompactView({ data }: { data: UsageData }) {
   const W = Widget.displaySize.width
   const isSmall = Widget.family === 'systemSmall' || (!Widget.family && W < 200)
   return (
-    <VStack alignment="leading" spacing={isSmall ? 4 : 6} padding={{ horizontal: 12, vertical: 8 }}>
+    <VStack
+      alignment="leading"
+      spacing={isSmall ? 3 : 6}
+      padding={{ horizontal: 12, vertical: isSmall ? 6 : 8 }}
+    >
       <Header data={data} online={online} minimal={isSmall} />
       <HStack alignment="center" spacing={4}>
-        <Text font={{ size: isSmall ? 26 : 30, weight: 'bold' }}>{fmtNum(data.calls)}</Text>
+        <Text font={{ size: isSmall ? 24 : 30, weight: 'bold' }}>{fmtNum(data.calls)}</Text>
         <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
           次请求
         </Text>
@@ -392,39 +396,22 @@ function CompactView({ data }: { data: UsageData }) {
           </Text>
         )}
       </HStack>
-      {isSmall ? (
-        <VStack alignment="leading" spacing={2}>
-          <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-              Token
-            </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
-          </HStack>
-          <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-              费用
-            </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
-          </HStack>
-        </VStack>
-      ) : (
-        <HStack alignment="center" spacing={12}>
-          <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-              Token
-            </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
-          </HStack>
-          <HStack alignment="center" spacing={3}>
-            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
-              费用
-            </Text>
-            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
-          </HStack>
+      <HStack alignment="center" spacing={isSmall ? 8 : 12}>
+        <HStack alignment="center" spacing={2}>
+          <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel">
+            Token
+          </Text>
+          <Text font={{ size: isSmall ? 11 : 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
         </HStack>
-      )}
+        <HStack alignment="center" spacing={2}>
+          <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel">
+            费用
+          </Text>
+          <Text font={{ size: isSmall ? 11 : 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+        </HStack>
+      </HStack>
       {data.topModel && (
-        <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel" minScaleFactor={0.75}>
+        <Text font={{ size: isSmall ? 10 : 12 }} foregroundStyle="secondaryLabel">
           {isSmall
             ? shortModelName(data.topModel.name)
             : `最多：${shortModelName(data.topModel.name)} · ${fmtNum(data.topModel.calls)} 次`}
