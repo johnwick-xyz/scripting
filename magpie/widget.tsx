@@ -319,7 +319,7 @@ function Header({ data, online, minimal }: { data: UsageData; online: boolean; m
       <Text
         font={{ size: 13, weight: 'bold' }}
         foregroundStyle="white"
-        padding={5}
+        padding={minimal ? 3 : 5}
         background={{ shape: 'circle', style: 'rgba(17,17,17,1)' }}
       >
         M
@@ -374,15 +374,36 @@ function ModelRowView({ m, max, barW }: { m: ModelRow; max: number; barW: number
   )
 }
 
+// 模型名太长时从中间的 - 处断成两行：nemotron-nano-9b-v2 -> [nemotron-, nano-9b-v2]
+function splitModelName(name: string): [string, string] {
+  const s = shortModelName(name)
+  if (s.length <= 16) return [s, '']
+  const mid = Math.floor(s.length / 2)
+  let cut = -1
+  for (let d = 0; d <= mid; d++) {
+    if (s[mid + d] === '-') {
+      cut = mid + d + 1
+      break
+    }
+    if (s[mid - d] === '-') {
+      cut = mid - d + 1
+      break
+    }
+  }
+  if (cut <= 0 || cut >= s.length) cut = 16
+  return [s.slice(0, cut), s.slice(cut)]
+}
+
 function CompactView({ data }: { data: UsageData }) {
   const online = !data.error || data.fromCache
   const W = Widget.displaySize.width
   const isSmall = Widget.family === 'systemSmall' || (!Widget.family && W < 200)
+  const modelLines = data.topModel ? splitModelName(data.topModel.name) : ['', '']
   return (
     <VStack
       alignment="leading"
-      spacing={isSmall ? 3 : 6}
-      padding={{ horizontal: 12, vertical: isSmall ? 6 : 8 }}
+      spacing={isSmall ? 2 : 6}
+      padding={{ horizontal: 12, vertical: isSmall ? 4 : 8 }}
     >
       <Header data={data} online={online} minimal={isSmall} />
       <HStack alignment="center" spacing={4}>
@@ -396,27 +417,54 @@ function CompactView({ data }: { data: UsageData }) {
           </Text>
         )}
       </HStack>
-      <HStack alignment="center" spacing={isSmall ? 8 : 12}>
-        <HStack alignment="center" spacing={2}>
-          <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel">
-            Token
-          </Text>
-          <Text font={{ size: isSmall ? 11 : 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+      {isSmall ? (
+        <HStack alignment="center" spacing={6}>
+          <HStack alignment="center" spacing={2}>
+            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+              Token
+            </Text>
+            <Text font={{ size: 10, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+          </HStack>
+          <HStack alignment="center" spacing={2}>
+            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+              费用
+            </Text>
+            <Text font={{ size: 10, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+          </HStack>
         </HStack>
-        <HStack alignment="center" spacing={2}>
-          <Text font={{ size: isSmall ? 11 : 12 }} foregroundStyle="secondaryLabel">
-            费用
-          </Text>
-          <Text font={{ size: isSmall ? 11 : 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+      ) : (
+        <HStack alignment="center" spacing={12}>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              Token
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtTokens(data.tokens)}</Text>
+          </HStack>
+          <HStack alignment="center" spacing={3}>
+            <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+              费用
+            </Text>
+            <Text font={{ size: 12, weight: 'semibold' }}>{fmtCost(data.cost)}</Text>
+          </HStack>
         </HStack>
-      </HStack>
-      {data.topModel && (
-        <Text font={{ size: isSmall ? 10 : 12 }} foregroundStyle="secondaryLabel">
-          {isSmall
-            ? shortModelName(data.topModel.name)
-            : `最多：${shortModelName(data.topModel.name)} · ${fmtNum(data.topModel.calls)} 次`}
-        </Text>
       )}
+      {data.topModel &&
+        (isSmall ? (
+          <VStack alignment="leading" spacing={1}>
+            <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+              {modelLines[0]}
+            </Text>
+            {modelLines[1] ? (
+              <Text font={{ size: 10 }} foregroundStyle="secondaryLabel">
+                {modelLines[1]}
+              </Text>
+            ) : null}
+          </VStack>
+        ) : (
+          <Text font={{ size: 12 }} foregroundStyle="secondaryLabel">
+            最多：{shortModelName(data.topModel.name)} · {fmtNum(data.topModel.calls)} 次
+          </Text>
+        ))}
       <Spacer />
       <Text font={{ size: 11 }} foregroundStyle="secondaryLabel">
         {data.updatedAt ? `${data.updatedAt} 更新` : '暂无数据'}
