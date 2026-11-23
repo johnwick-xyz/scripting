@@ -1,0 +1,9 @@
+#!name=中国电信 Cookie 抓取
+#!desc=打开中国电信 App 后，把 Cookie 写进 BoxJs，供 Scripting 中国电信小组件读取
+#!author=MJ
+
+[Script]
+http-request ^https://e\.dlife\.cn/user/(package_detail|balance)\.do tag=电信Cookie, script-path=<你的 TelecomGetCookie.js raw 地址>, requires-body=false
+
+[MITM]
+hostname = e.dlife.cn
