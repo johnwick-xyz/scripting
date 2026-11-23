@@ -520,12 +520,17 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-async function getCookie(): Promise<string> {
+async function getCookieCandidates(): Promise<string[]> {
+  const out: string[] = []
+  const push = (c: string) => {
+    const v = cleanCookie(c)
+    if (v && !out.includes(v)) out.push(v)
+  }
   // 1. 登录地址：每次换一个新鲜 Cookie（最稳，不怕过期）
   const loginUrl = await getLoginUrl()
   if (loginUrl) {
     const fresh = await mintCookie(loginUrl)
-    if (fresh) return fresh
+    if (fresh) push(fresh)
   }
   // 2. App 里填的 Cookie（preference.json）
   try {
@@ -533,15 +538,37 @@ async function getCookie(): Promise<string> {
     const prefPath = Path.join(root, 'preference.json')
     if (FileManager.existsSync(prefPath)) {
       const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
-      if (pref.cookie) return cleanCookie(pref.cookie)
+      if (pref.cookie) push(pref.cookie)
     }
   } catch (e) {}
   // 3. BoxJs（Loon 抓到的 Cookie）
   for (const url of BOXJS_URLS) {
     const v = await getBoxJsCookie(url)
-    if (v) return v
+    if (v) push(v)
   }
-  return ''
+  return out
+}
+
+// 先读文本再解析 JSON：接口返回登录页 HTML 时能看到到底回了什么，
+// 而不是只报一个 SyntaxError
+async function fetchJson(url: string, cookie: string): Promise<any> {
+  const res: any = await fetch(url, {
+    method: 'GET',
+    headers: { Cookie: cookie },
+    signal: AbortSignal.timeout(8000),
+  })
+  const text = await res.text()
+  try {
+    return JSON.parse(text)
+  } catch (e) {
+    const snippet = text
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 80)
+    throw new Error(
+      `接口返回非JSON（HTTP ${res.status} ${snippet || '空响应'}），Cookie 可能不对或已过期`,
+    )
+  }
 }
 
 async function fetchData(cookie: string): Promise<WidgetData> {
@@ -561,10 +588,7 @@ async function fetchData(cookie: string): Promise<WidgetData> {
   }
 
   // 套餐明细：流量、通话
-  const detail: any = await fetch(DETAIL_URL, {
-    method: 'GET',
-    headers: { Cookie: cookie },
-  }).then((r) => r.json())
+  const detail: any = await fetchJson(DETAIL_URL, cookie)
   if (!detail || typeof detail !== 'object') {
     throw new Error('套餐接口没返回数据，Cookie 可能过期，重新抓一次')
   }
@@ -632,10 +656,7 @@ async function fetchData(cookie: string): Promise<WidgetData> {
 
   // 话费余额：totalBalanceAvailable 单位是分
   try {
-    const bal: any = await fetch(BALANCE_URL, {
-      method: 'GET',
-      headers: { Cookie: cookie },
-    }).then((r) => r.json())
+    const bal: any = await fetchJson(BALANCE_URL, cookie)
     if (bal && bal.totalBalanceAvailable != null) {
       out.fee = {
         number: (Number(bal.totalBalanceAvailable) / 100).toFixed(2),
@@ -649,21 +670,32 @@ async function fetchData(cookie: string): Promise<WidgetData> {
 
 ;(async () => {
   try {
-    const cookie = await getCookie()
-    if (!cookie) {
+    const candidates = await getCookieCandidates()
+    if (!candidates.length) {
       Widget.present(
         <ErrorView message="还没拿到登录地址或 Cookie。Loon 装好 Telecom.lpx 后，Safari 打开 https://e.dlife.cn/index.do 登录一次；也可以先在 App 里填 Cookie。" />,
       )
       return
     }
-    const data = await fetchData(cookie)
-    // 存一份缓存，拉取失败时下次还能显示
-    try {
-      const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
-      if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
-      FileManager.writeAsStringSync(Path.join(root, 'cache.json'), JSON.stringify(data))
-    } catch (e) {}
-    Widget.present(<WidgetView data={data} />)
+    // 按顺序试每个 Cookie：换出来的新鲜 Cookie 不行就试存好的，
+    // 哪个能拿到数据就用哪个
+    let lastErr: any = null
+    for (const cookie of candidates) {
+      try {
+        const data = await fetchData(cookie)
+        // 存一份缓存，拉取失败时下次还能显示
+        try {
+          const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+          if (!FileManager.existsSync(root)) FileManager.createDirectorySync(root, true)
+          FileManager.writeAsStringSync(Path.join(root, 'cache.json'), JSON.stringify(data))
+        } catch (e) {}
+        Widget.present(<WidgetView data={data} />)
+        return
+      } catch (e) {
+        lastErr = e
+      }
+    }
+    throw lastErr || new Error('拉取失败')
   } catch (e) {
     // 失败时读缓存
     try {
