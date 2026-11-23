@@ -1,0 +1,10 @@
+#!name=亚朵签到
+#!desc=抓取亚朵 App 的登录凭证与签到请求，每天 8:00 自动签到
+#!author=MJ
+
+[MITM]
+hostname = yaduo.com, *.yaduo.com
+
+[Script]
+http-request ^https?://[^/]*\.yaduo\.com/ tag=亚朵凭证抓取, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/atour/AtourGetAuth.js, requires-body=true
+cron "0 8 * * *" script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/atour/AtourSign.js, tag=亚朵每日签到
