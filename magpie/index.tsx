@@ -67,6 +67,64 @@ interface ModelRow {
   name: string
   sub: string
   calls: number
+  tokens: number // 网页排行口径：input + output + cache_read + cache_write
+  cost: number
+  errors: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  cacheUnknown: number
+  timed: number
+  ttftMs: number
+  decodeMs: number
+  decodeOut: number
+  decodeN: number
+  floorMs: number
+  floorOut: number
+  floorN: number
+  rates: any // { s: {bin: 条数}, f: {bin: 条数} }，没有就是 null
+}
+
+// 和 widget.tsx 里同一个函数：接口回来是下划线字段，
+// 老缓存里是驼峰；老缓存只有 tokens（input+output 口径）
+// 时就沿用它，等下次拉取再按新口径算。
+// App 和小组件共用同一份缓存，必须写一样的模型结构，
+// 不然 App 刷新一次就会把缓存里的模型列表冲掉（2026-11-24
+// 就这么丢过一次模型数据）。
+function normalizeModel(m: any): ModelRow {
+  const input = Number(m.input) || 0
+  const output = Number(m.output) || 0
+  const cacheRead = Number(m.cache_read ?? m.cacheRead) || 0
+  const cacheWrite = Number(m.cache_write ?? m.cacheWrite) || 0
+  const sum = input + output + cacheRead + cacheWrite
+  return {
+    name: String(m.name || m.id || ''),
+    sub: String(m.sub || m.provider || ''),
+    calls: Number(m.calls) || 0,
+    tokens: sum || Number(m.tokens) || 0,
+    cost: Number(m.cost) || 0,
+    errors: Number(m.errors) || 0,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    cacheUnknown: Number(m.cache_unknown ?? m.cacheUnknown) || 0,
+    timed: Number(m.timed) || 0,
+    ttftMs: Number(m.ttft_ms ?? m.ttftMs) || 0,
+    decodeMs: Number(m.decode_ms ?? m.decodeMs) || 0,
+    decodeOut: Number(m.decode_out ?? m.decodeOut) || 0,
+    decodeN: Number(m.decode_n ?? m.decodeN) || 0,
+    floorMs: Number(m.floor_ms ?? m.floorMs) || 0,
+    floorOut: Number(m.floor_out ?? m.floorOut) || 0,
+    floorN: Number(m.floor_n ?? m.floorN) || 0,
+    rates: m.rates && typeof m.rates === 'object' ? m.rates : null,
+  }
+}
+
+interface AgentRow {
+  name: string
+  calls: number
   tokens: number
   cost: number
 }
@@ -80,6 +138,12 @@ interface UsageData {
   cost: number
   tokens: number
   topModel: ModelRow | null
+  topAgent: AgentRow | null
+  models: ModelRow[]
+  totalTokens: number // 全部模型的 token 之和，算占比的分母
+  agents: AgentRow[]
+  series: number[]
+  sessionCount: number
   updatedAt: string
   updatedTs: number
   fromCache: boolean
@@ -135,15 +199,24 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
   const output = Number(j.output) || 0
   const models: ModelRow[] = Array.isArray(j.models)
     ? j.models
-        .map((m: any) => ({
-          name: String(m.name || m.id || ''),
-          sub: String(m.sub || m.provider || ''),
-          calls: Number(m.calls) || 0,
-          tokens: (Number(m.input) || 0) + (Number(m.output) || 0),
-          cost: Number(m.cost) || 0,
-        }))
+        .map((m: any) => normalizeModel(m))
         .filter((m: ModelRow) => m.name)
-        .sort((a: ModelRow, b: ModelRow) => b.calls - a.calls)
+        .sort((a: ModelRow, b: ModelRow) => b.tokens - a.tokens)
+    : []
+  const totalTokens = models.reduce((s: number, m: ModelRow) => s + m.tokens, 0)
+  const agents: AgentRow[] = Array.isArray(j.agents)
+    ? j.agents
+        .map((a: any) => ({
+          name: String(a.name || a.id || ''),
+          calls: Number(a.calls) || 0,
+          tokens: (Number(a.input) || 0) + (Number(a.output) || 0),
+          cost: Number(a.cost) || 0,
+        }))
+        .filter((a: AgentRow) => a.name)
+        .sort((a: AgentRow, b: AgentRow) => b.calls - a.calls)
+    : []
+  const series: number[] = Array.isArray(j.series)
+    ? j.series.map((p: any) => Number(p.calls) || 0)
     : []
   const now = new Date()
   return {
@@ -155,6 +228,12 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
     cost: Number(j.cost) || 0,
     tokens: input + output,
     topModel: models[0] || null,
+    topAgent: agents[0] || null,
+    models: models.slice(0, 3),
+    totalTokens,
+    agents: agents.slice(0, 2),
+    series: series.slice(-12),
+    sessionCount: Number(j.sessionCount) || 0,
     updatedAt: fmtTimeShort(now),
     updatedTs: now.getTime(),
     fromCache: false,
