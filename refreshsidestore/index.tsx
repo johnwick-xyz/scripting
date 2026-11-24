@@ -179,16 +179,26 @@ function SettingsView({ initialState }: { initialState: WidgetState }) {
 }
 
 async function run() {
-  const settings = getSettings()
-  const action = Script.queryParameters.action
-  if (action === "sidestore" || action === "livecontainer") {
-    const url = action === "sidestore" ? settings.sideStoreURL : settings.liveContainerURL
-    if (!await Safari.openURL(url)) await Dialog.alert({ title: "打开失败", message: "请检查客户端 URL 设置" })
+  try {
+    const settings = getSettings()
+    const action = Script.queryParameters.action
+    if (action === "sidestore" || action === "livecontainer") {
+      const url = action === "sidestore" ? settings.sideStoreURL : settings.liveContainerURL
+      if (!await Safari.openURL(url)) await Dialog.alert({ title: "打开失败", message: "请检查客户端 URL 设置" })
+      Script.exit()
+      return
+    }
+    // 权限被拒也不影响打开设置页，配对 / 扫描时再处理；原来这里一失败就整个退出了。
+    try {
+      await Script.requestAccess(["fileSystem", "vpn", "localDevVPN"])
+    } catch {}
+    await Navigation.present({ element: <SettingsView initialState={await readWidgetState(settings)} /> })
+  } catch (error) {
+    // 启动失败时把原因弹出来，而不是悄悄退回列表。
+    const detail = error instanceof Error ? (error.stack || error.message) : String(error)
+    await Dialog.alert({ title: "启动失败", message: detail.slice(0, 500) })
+  } finally {
     Script.exit()
-    return
   }
-  await Script.requestAccess(["fileSystem", "vpn", "localDevVPN"])
-  await Navigation.present({ element: <SettingsView initialState={await readWidgetState(settings)} /> })
-  Script.exit()
 }
 run()
