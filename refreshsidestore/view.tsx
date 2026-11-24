@@ -1,7 +1,18 @@
-import { Button, Circle, GeometryReader, HStack, Image, PathShape, Spacer, Text, VStack, ZStack } from "scripting"
+import { Circle, GeometryReader, HStack, Image, PathShape, Spacer, Text, VStack, ZStack } from "scripting"
 import { countdown, findDuo, shortDate, shortTime, soonestDuo, type AppRecord } from "./model"
-import { Settings, WidgetState } from "./runtime"
 import { backgroundGradient, DEFAULT_BACKGROUNDS } from "./appearance"
+
+// 手动版小组件的显示状态：数据是用户在设置页填的到期日，不是扫出来的。
+export type ManualSettings = {
+  totalDays: number
+  lightBackground: string
+  darkBackground: string
+}
+export type ManualState = {
+  snapshot?: { app: AppRecord; readAt: number }
+  apps?: AppRecord[]
+  estimated?: boolean
+}
 
 function pointColor(progress: number): any {
   if (progress < 0.18) return "#B82020"
@@ -47,7 +58,7 @@ function Logo({ size }: { size: number }) {
 }
 
 export function Dial({ state, settings, now, size = 160, showRefreshTime = true, app }: {
-  state: WidgetState; settings: Settings; now: number; size?: number; showRefreshTime?: boolean
+  state: ManualState; settings: ManualSettings; now: number; size?: number; showRefreshTime?: boolean
   app?: AppRecord
 }) {
   const scale = size / 160
@@ -104,7 +115,7 @@ export function Dial({ state, settings, now, size = 160, showRefreshTime = true,
 }
 
 export function WidgetView({ state, settings, now, medium = false }: {
-  state: WidgetState; settings: Settings; now: number; medium?: boolean
+  state: ManualState; settings: ManualSettings; now: number; medium?: boolean
 }) {
   const app = state.snapshot?.app
   const apps = state.apps ?? (app ? [app] : [])
@@ -119,15 +130,13 @@ export function WidgetView({ state, settings, now, medium = false }: {
     }}>
     {geometry => {
       // 二合一：中号同时放两个马蹄圈，左 SideStore、右 LiveContainer；
-      // 只找到其中一个（或都没找到）时退回原来的单圈 + 右侧列表。
+      // 只填了其中一个（或都没填）时退回原来的单圈 + 右侧列表。
       if (twoDials && left && right) {
         const dialSize = Math.min(geometry.size.height, (geometry.size.width - 8) / 2)
-        return <Button shortcutIndex={0} buttonStyle="plain">
-          <HStack spacing={8} contentShape={{ type: "rect", cornerRadius: 0 }} frame={{ width: geometry.size.width, height: geometry.size.height, alignment: "center" }}>
-            <Dial state={state} settings={settings} now={now} size={dialSize} app={left} showRefreshTime />
-            <Dial state={state} settings={settings} now={now} size={dialSize} app={right} showRefreshTime={false} />
-          </HStack>
-        </Button>
+        return <HStack spacing={8} contentShape={{ type: "rect", cornerRadius: 0 }} frame={{ width: geometry.size.width, height: geometry.size.height, alignment: "center" }}>
+          <Dial state={state} settings={settings} now={now} size={dialSize} app={left} showRefreshTime />
+          <Dial state={state} settings={settings} now={now} size={dialSize} app={right} showRefreshTime={false} />
+        </HStack>
       }
       const size = Math.min(geometry.size.height, medium ? geometry.size.width * 0.46 : geometry.size.width)
       const gap = medium ? 8 : 0
@@ -138,38 +147,35 @@ export function WidgetView({ state, settings, now, medium = false }: {
       const listTop = (size - rowHeight * visibleApps.length) / 2 + 8 * scale
       // 小号只放一个圈时，显示二合一里先到期的那个。
       const dialApp = !medium ? (soonestDuo(apps) ?? app) : app
-      // The first item in the widget's Shortcuts list is zero-based (index 0).
-      return <Button shortcutIndex={0} buttonStyle="plain">
-        <HStack spacing={gap} contentShape={{ type: "rect", cornerRadius: 0 }} frame={{ width: geometry.size.width, height: geometry.size.height, alignment: medium ? "leading" : "center" }}>
-          <Dial state={state} settings={settings} now={now} size={size} app={dialApp} showRefreshTime={!medium} />
-          {medium ? <ZStack frame={{ width: rightWidth, height: size }}>
-            <HStack spacing={3} frame={{ width: rightWidth, height: 18 * scale }}
-              position={{ x: rightWidth / 2, y: 18 * scale - 2 }}>
-              <Spacer minLength={0} />
-              <Image systemName="arrow.clockwise" font={9 * scale} foregroundStyle="secondaryLabel" />
-              <Text font={10 * scale} fontWeight="medium" foregroundStyle="secondaryLabel">{shortTime(state.snapshot?.readAt || undefined)}</Text>
-            </HStack>
-            {visibleApps.map((item, index) => {
-              const value = countdown(item.expiresAt, now, settings.totalDays)
-              return <VStack alignment="leading" spacing={7 * scale}
-                frame={{ width: rightWidth, height: 30 * scale }}
-                position={{ x: rightWidth / 2, y: listTop + rowHeight * (index + 0.5) }}>
-                <HStack spacing={4 * scale} frame={{ width: rightWidth, height: 16 * scale }}>
-                  <Circle fill={pointColor(value.progress)} frame={{ width: 5 * scale, height: 5 * scale }} />
-                  <Text font={12 * scale} fontWeight="semibold" foregroundStyle="label" lineLimit={1}
-                    frame={{ width: Math.max(0, rightWidth - 62 * scale), alignment: "leading" }}>{item.name}</Text>
-                  <Spacer minLength={0} />
-                  <Text font={10 * scale} fontWeight="medium" foregroundStyle={value.expired ? "systemRed" : "secondaryLabel"}
-                    frame={{ width: 42 * scale, alignment: "trailing" }} lineLimit={1}>{value.expired ? "已到期" : `${value.text} 天`}</Text>
-                </HStack>
-                <ProgressBlocks expiresAt={item.expiresAt} now={now} totalDays={settings.totalDays} width={rightWidth} />
-              </VStack>
-            })}
-            {!visibleApps.length ? <Text font={12 * scale} foregroundStyle="secondaryLabel" lineLimit={2}
-              frame={{ width: rightWidth }}>授权数据后显示应用有效期</Text> : null}
-          </ZStack> : null}
-        </HStack>
-      </Button>
+      return <HStack spacing={gap} contentShape={{ type: "rect", cornerRadius: 0 }} frame={{ width: geometry.size.width, height: geometry.size.height, alignment: medium ? "leading" : "center" }}>
+        <Dial state={state} settings={settings} now={now} size={size} app={dialApp} showRefreshTime={!medium} />
+        {medium ? <ZStack frame={{ width: rightWidth, height: size }}>
+          <HStack spacing={3} frame={{ width: rightWidth, height: 18 * scale }}
+            position={{ x: rightWidth / 2, y: 18 * scale - 2 }}>
+            <Spacer minLength={0} />
+            <Image systemName="arrow.clockwise" font={9 * scale} foregroundStyle="secondaryLabel" />
+            <Text font={10 * scale} fontWeight="medium" foregroundStyle="secondaryLabel">{shortTime(state.snapshot?.readAt || undefined)}</Text>
+          </HStack>
+          {visibleApps.map((item, index) => {
+            const value = countdown(item.expiresAt, now, settings.totalDays)
+            return <VStack alignment="leading" spacing={7 * scale}
+              frame={{ width: rightWidth, height: 30 * scale }}
+              position={{ x: rightWidth / 2, y: listTop + rowHeight * (index + 0.5) }}>
+              <HStack spacing={4 * scale} frame={{ width: rightWidth, height: 16 * scale }}>
+                <Circle fill={pointColor(value.progress)} frame={{ width: 5 * scale, height: 5 * scale }} />
+                <Text font={12 * scale} fontWeight="semibold" foregroundStyle="label" lineLimit={1}
+                  frame={{ width: Math.max(0, rightWidth - 62 * scale), alignment: "leading" }}>{item.name}</Text>
+                <Spacer minLength={0} />
+                <Text font={10 * scale} fontWeight="medium" foregroundStyle={value.expired ? "systemRed" : "secondaryLabel"}
+                  frame={{ width: 42 * scale, alignment: "trailing" }} lineLimit={1}>{value.expired ? "已到期" : `${value.text} 天`}</Text>
+              </HStack>
+              <ProgressBlocks expiresAt={item.expiresAt} now={now} totalDays={settings.totalDays} width={rightWidth} />
+            </VStack>
+          })}
+          {!visibleApps.length ? <Text font={12 * scale} foregroundStyle="secondaryLabel" lineLimit={2}
+            frame={{ width: rightWidth }}>打开 App 填上到期时间后显示</Text> : null}
+        </ZStack> : null}
+      </HStack>
     }}
   </GeometryReader>
 }
