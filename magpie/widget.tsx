@@ -545,6 +545,9 @@ function ModelRowView({
   nameFont = 12,
   nameScale = 0.85,
   showDetails = true,
+  barH = 5,
+  rowGap = 2,
+  showBar = true,
 }: {
   m: ModelRow
   index: number
@@ -554,11 +557,14 @@ function ModelRowView({
   nameFont?: number
   nameScale?: number
   showDetails?: boolean
+  barH?: number
+  rowGap?: number
+  showBar?: boolean
 }) {
   const color = MODEL_COLORS[index % MODEL_COLORS.length]
   const frac = max > 0 ? Math.max(0.015, m.tokens / max) : 0
   return (
-    <VStack alignment="leading" spacing={2}>
+    <VStack alignment="leading" spacing={rowGap}>
       <HStack alignment="center" spacing={4}>
         <Text
           font={10}
@@ -573,10 +579,12 @@ function ModelRowView({
         <Spacer />
         <Text font={nameFont} fontWeight="bold">{fmtTokens(m.tokens)}</Text>
       </HStack>
-      <ZStack alignment="leading">
-        <Capsule frame={{ width: barW, height: 5 }} fill="rgba(0,0,0,0.08)" />
-        <Capsule frame={{ width: Math.max(5, barW * frac), height: 5 }} fill={color} />
-      </ZStack>
+      {showBar && (
+        <ZStack alignment="leading">
+          <Capsule frame={{ width: barW, height: barH }} fill="rgba(0,0,0,0.08)" />
+          <Capsule frame={{ width: Math.max(5, barW * frac), height: barH }} fill={color} />
+        </ZStack>
+      )}
       {showDetails && (
         <Text font={11} foregroundStyle="secondaryLabel">
           {modelDetails(m, totalTokens)}
@@ -590,13 +598,58 @@ function CompactView({ data }: { data: UsageData }) {
   const online = !data.error || data.fromCache
   const W = Widget.displaySize.width
   const isSmall = Widget.family === 'systemSmall' || (!Widget.family && W < 200)
+  // 统计行：一行放下请求数 · Token · 费用（155 高度放不下大卡片
+  // 那种三列大数字，失败次数单独标红）。
+  const stats = isSmall
+    ? `${fmtNum(data.calls)} 次 · ${fmtTokens(data.tokens)} · ${fmtCost(data.cost)}`
+    : `${fmtNum(data.calls)} 次请求 · ${fmtTokens(data.tokens)} Token · ${fmtCost(data.cost)}`
   return (
     <VStack
       alignment="leading"
-      spacing={isSmall ? 4 : 6}
-      padding={{ horizontal: 12, vertical: 8 }}
+      spacing={isSmall ? 2 : 3}
+      padding={{ horizontal: 12, vertical: isSmall ? 8 : 6 }}
     >
       <Header data={data} online={online} minimal={isSmall} />
+      {isSmall ? (
+        <VStack alignment="leading" spacing={2}>
+          <HStack alignment="center" spacing={4}>
+            <Text font={24} fontWeight="bold">{fmtNum(data.calls)}</Text>
+            <Text font={12} foregroundStyle="secondaryLabel">
+              次请求
+            </Text>
+            {data.errors > 0 && (
+              <Text font={12} foregroundStyle="rgba(239,68,68,1)">
+                失败 {data.errors}
+              </Text>
+            )}
+          </HStack>
+          <HStack alignment="center" spacing={4}>
+            <HStack alignment="center" spacing={2}>
+              <Text font={9} foregroundStyle="secondaryLabel">
+                Token
+              </Text>
+              <Text font={9} fontWeight="semibold">{fmtTokens(data.tokens)}</Text>
+            </HStack>
+            <HStack alignment="center" spacing={2}>
+              <Text font={9} foregroundStyle="secondaryLabel">
+                费用
+              </Text>
+              <Text font={9} fontWeight="semibold">{fmtCost(data.cost)}</Text>
+            </HStack>
+          </HStack>
+        </VStack>
+      ) : (
+        <HStack alignment="center" spacing={4}>
+          <Text font={12} fontWeight="semibold" minScaleFactor={0.85}>
+            {stats}
+          </Text>
+          {data.errors > 0 && (
+            <Text font={12} foregroundStyle="rgba(239,68,68,1)">
+              失败 {data.errors}
+            </Text>
+          )}
+        </HStack>
+      )}
       {data.models.map((m, i) => (
         <ModelRowView
           key={i}
@@ -605,9 +658,12 @@ function CompactView({ data }: { data: UsageData }) {
           max={data.models[0] ? data.models[0].tokens : 1}
           totalTokens={data.totalTokens}
           barW={W - 24}
-          nameFont={isSmall ? 10 : 12}
+          nameFont={isSmall ? 10 : 11}
           nameScale={isSmall ? 0.7 : 0.85}
           showDetails={false}
+          barH={4}
+          rowGap={1}
+          showBar={!isSmall}
         />
       ))}
       <Spacer />
