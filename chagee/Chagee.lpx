@@ -8,4 +8,4 @@ hostname = *.qmai.cn, qmai.cn
 [Script]
 http-request ^https?://[^/]*\.qmai\.cn/ tag=霸王茶姬凭证抓取, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/chagee/ChageeGetAuth.js, requires-body=true
 http-response ^https?://[^/]*\.qmai\.cn/web/(cmk-center/sign/takePartInSign|catering/crm/personal-info|catering2-apiserver/v3/order/list) tag=霸王茶姬用户ID抓取, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/chagee/ChageeGetUserId.js, requires-body=true
-cron "0 8 * * *" script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/chagee/ChageeSign.js, tag=霸王茶姬每日签到
+cron "1 9 * * *" script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/chagee/ChageeSign.js, tag=霸王茶姬每日签到
