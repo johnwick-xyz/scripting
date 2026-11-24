@@ -1,0 +1,10 @@
+#!name=传祺签到
+#!desc=抓取广汽传祺 App 的登录凭证与签到请求，每天 9:00–9:45 随机签到
+#!author=MJ
+
+[MITM]
+hostname = gacmotor.com, *.gacmotor.com
+
+[Script]
+http-request ^https?://[^/]*\.gacmotor\.com/ tag=传祺凭证抓取, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/trumpchi/TrumpchiGetAuth.js, requires-body=true
+cron "0,5,10,15,20,25,30,35,40,45 9 * * *" script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/trumpchi/TrumpchiSign.js, tag=传祺每日签到
