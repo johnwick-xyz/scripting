@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { rpt, fmtTimeShort, fmtTokens, fmtCost, fmtNum } from './utils'
+import { rpt, fmtTimeShort, fmtTokens, fmtCost, fmtCostWeb, fmtNum } from './utils'
 
 // Magpie Scripting 小组件
 // Magpie 是 yetone 的本地 AI 网关（Docker 跑在 john 的 Debian 服务器上，
@@ -21,8 +21,17 @@ import { rpt, fmtTimeShort, fmtTokens, fmtCost, fmtNum } from './utils'
 //   回来是 Usage 页的汇总 JSON：顶层就是 Totals——
 //   calls（请求数）、errors、input、output、cache_read、cache_write、
 //   reasoning、cost（美元）、unpriced，还有 models[]（Group：name、sub
-//   供应商名、calls、input、output、cost）、agents[]、sessions[]、
+//   供应商名、再加 Totals 全套：timed、ttft_ms、decode_ms/out/n、
+//   floor_ms/out/n、rates 直方图、cache_unknown）、agents[]、sessions[]、
 //   sessionCount、series[]（时间轴，每点有 calls）。
+//   网页 Usage 页的模型排行（drawLedRank，metric=tokens）：
+//   排按 token 数（input+output+cache_read+cache_write），
+//   右边大数是这个口径，条按第一名算占比，明细行是
+//   请求 · 费用 · 速度 · 首字 · 命中率 · 占比 · 失败。
+//   速度是计时回复的中值（rates 直方图的 bin 中值，bin 400 是 1，
+//   每档 1.02 倍；只有一条时按 decode_out/decode_ms 实测算）；
+//   首字是 ttft_ms/timed 的平均；命中率是
+//   cache_read/(input+cache_read+cache_write-cache_unknown)。
 //   注意：手机不是本机，所以必须同时满足两点：
 //   1) Magpie 开了局域网共享（Web UI → Settings → Network and sharing
 //      → Share on local network），否则 403；
@@ -78,8 +87,155 @@ interface ModelRow {
   name: string
   sub: string
   calls: number
-  tokens: number
+  tokens: number // 网页排行口径：input + output + cache_read + cache_write
   cost: number
+  errors: number
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+  cacheUnknown: number
+  timed: number
+  ttftMs: number
+  decodeMs: number
+  decodeOut: number
+  decodeN: number
+  floorMs: number
+  floorOut: number
+  floorN: number
+  rates: any // { s: {bin: 条数}, f: {bin: 条数} }，没有就是 null
+}
+
+// 新旧两种字段名都认：接口回来是下划线，老缓存里是驼峰；
+// 老缓存的 models 只有 tokens（input+output 口径），input/output
+// 都是 0 时就沿用它存的 tokens，等下次拉取再按新口径算。
+function normalizeModel(m: any): ModelRow {
+  const input = Number(m.input) || 0
+  const output = Number(m.output) || 0
+  const cacheRead = Number(m.cache_read ?? m.cacheRead) || 0
+  const cacheWrite = Number(m.cache_write ?? m.cacheWrite) || 0
+  const sum = input + output + cacheRead + cacheWrite
+  return {
+    name: String(m.name || m.id || ''),
+    sub: String(m.sub || m.provider || ''),
+    calls: Number(m.calls) || 0,
+    tokens: sum || Number(m.tokens) || 0,
+    cost: Number(m.cost) || 0,
+    errors: Number(m.errors) || 0,
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    cacheUnknown: Number(m.cache_unknown ?? m.cacheUnknown) || 0,
+    timed: Number(m.timed) || 0,
+    ttftMs: Number(m.ttft_ms ?? m.ttftMs) || 0,
+    decodeMs: Number(m.decode_ms ?? m.decodeMs) || 0,
+    decodeOut: Number(m.decode_out ?? m.decodeOut) || 0,
+    decodeN: Number(m.decode_n ?? m.decodeN) || 0,
+    floorMs: Number(m.floor_ms ?? m.floorMs) || 0,
+    floorOut: Number(m.floor_out ?? m.floorOut) || 0,
+    floorN: Number(m.floor_n ?? m.floorN) || 0,
+    rates: m.rates && typeof m.rates === 'object' ? m.rates : null,
+  }
+}
+
+// 直方图的中值：和网页 ledHistMedian 一样——bin 的中值是
+// 1.02^(bin-399.5)，取中间一条（偶数条取中间两条的平均）。
+function histMedian(h: any): number {
+  if (!h || typeof h !== 'object') return 0
+  const bins = Object.keys(h)
+    .map(Number)
+    .sort((a, b) => a - b)
+  let n = 0
+  for (const b of bins) n += Number(h[String(b)]) || 0
+  if (n === 0) return 0
+  const lo = Math.floor((n - 1) / 2)
+  const hi = Math.floor(n / 2)
+  let seen = 0
+  let sum = 0
+  for (const b of bins) {
+    const c = Number(h[String(b)]) || 0
+    for (const i of [lo, hi]) {
+      if (i >= seen && i < seen + c) sum += Math.pow(1.02, b - 399.5)
+    }
+    seen += c
+  }
+  return sum / 2
+}
+
+// 计时回复的写入速度（token/秒）：有直方图且不止一条取中值，
+// 只有一条按实测算，和网页 ledSpeed 一样。
+function modelSpeed(m: ModelRow): number {
+  if (m.rates && m.decodeN !== 1) return histMedian(m.rates.s)
+  if (m.decodeMs > 0) return (1000 * m.decodeOut) / m.decodeMs
+  return 0
+}
+
+// 没计时的回复至少写多快（token/秒）：和网页 ledFloor 一样。
+function modelFloor(m: ModelRow): number {
+  if (m.rates && m.floorN !== 1) return histMedian(m.rates.f)
+  if (m.floorMs > 0) return (1000 * m.floorOut) / m.floorMs
+  return 0
+}
+
+// 平均首字等待（毫秒）：ttft_ms / timed。
+function modelTTFT(m: ModelRow): number {
+  return m.timed > 0 ? m.ttftMs / m.timed : 0
+}
+
+// 缓存命中率：cache_read / (input+cache_read+cache_write-cache_unknown)，
+// 分母 <= 0 时没有（网页 cacheHitOf 一样）。
+function modelHitRate(m: ModelRow): number | null {
+  const p = m.input + m.cacheRead + m.cacheWrite - m.cacheUnknown
+  if (p <= 0) return null
+  return m.cacheRead / p
+}
+
+// 命中率：网页是两位小数，99.99 / 0.01 封顶。
+function fmtHitRate(h: number): string {
+  const s = (100 * h).toFixed(2)
+  if (h < 1 && Number(s) >= 100) return '99.99%'
+  if (h > 0 && Number(s) <= 0) return '0.01%'
+  return s + '%'
+}
+
+// 等待时长：<1 秒显示毫秒，否则秒（<10 秒一位小数，否则整数），和网页 ledTook 一样。
+function fmtTook(ms: number): string {
+  const r = Math.round(ms)
+  if (r < 1000) return `${r} 毫秒`
+  const s = r / 1000
+  return `${s < 10 ? s.toFixed(1) : Math.round(s)} 秒`
+}
+
+// 速度那一段：实测 “147 token/秒 · 1 次计时”，没计时的
+// “≥100 token/秒 · 30 次回复”，两样都有时条数多的在前，中间用 “；”。
+function speedText(m: ModelRow): string {
+  const v = modelSpeed(m)
+  const f = modelFloor(m)
+  const measured = v > 0 ? `${Math.round(v)} token/秒${m.decodeN > 0 ? ` · ${m.decodeN} 次计时` : ''}` : ''
+  const floor = f > 0 ? `≥${Math.round(f)} token/秒${m.floorN > 0 ? ` · ${m.floorN} 次回复` : ''}` : ''
+  if (measured && floor) {
+    return m.floorN > m.decodeN ? `${floor}；${measured}` : `${measured}；${floor}`
+  }
+  return measured || floor
+}
+
+// 明细行：和网页排行行（rk-b）一样的顺序和内容——
+// 请求 · 费用 · 速度 · 首字 · 命中率 · 占比 · 失败。
+// 没有的项不写（费用 0、没计时、没缓存、没失败都跳过）。
+function modelDetails(m: ModelRow, totalTokens: number): string {
+  const parts: string[] = []
+  parts.push(`${fmtNum(m.calls)} 个请求`)
+  if (m.cost) parts.push(fmtCostWeb(m.cost))
+  const sp = speedText(m)
+  if (sp) parts.push(sp)
+  const ttft = modelTTFT(m)
+  if (ttft > 0) parts.push(`首字 ${fmtTook(ttft)}`)
+  const hit = modelHitRate(m)
+  if (hit !== null) parts.push(`命中率 ${fmtHitRate(hit)}`)
+  if (totalTokens > 0) parts.push(`${Math.round((100 * m.tokens) / totalTokens)}%`)
+  if (m.errors > 0) parts.push(`${m.errors} 失败`)
+  return parts.join(' · ')
 }
 
 interface AgentRow {
@@ -100,6 +256,7 @@ interface UsageData {
   topModel: ModelRow | null
   topAgent: AgentRow | null
   models: ModelRow[]
+  totalTokens: number // 全部模型的 token 之和，算占比的分母
   agents: AgentRow[]
   series: number[] // 每点请求数（今日按小时）
   sessionCount: number
@@ -207,16 +364,11 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
   const output = Number(j.output) || 0
   const models: ModelRow[] = Array.isArray(j.models)
     ? j.models
-        .map((m: any) => ({
-          name: String(m.name || m.id || ''),
-          sub: String(m.sub || m.provider || ''),
-          calls: Number(m.calls) || 0,
-          tokens: (Number(m.input) || 0) + (Number(m.output) || 0),
-          cost: Number(m.cost) || 0,
-        }))
+        .map((m: any) => normalizeModel(m))
         .filter((m: ModelRow) => m.name)
-        .sort((a: ModelRow, b: ModelRow) => b.calls - a.calls)
+        .sort((a: ModelRow, b: ModelRow) => b.tokens - a.tokens)
     : []
+  const totalTokens = models.reduce((s: number, m: ModelRow) => s + m.tokens, 0)
   const agents: AgentRow[] = Array.isArray(j.agents)
     ? j.agents
         .map((a: any) => ({
@@ -242,7 +394,8 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
     tokens: input + output,
     topModel: models[0] || null,
     topAgent: agents[0] || null,
-    models: models.slice(0, 4),
+    models: models.slice(0, 3),
+    totalTokens,
     agents: agents.slice(0, 2),
     series: series.slice(-12),
     sessionCount: Number(j.sessionCount) || 0,
@@ -265,6 +418,7 @@ function emptyData(period: string): UsageData {
     topModel: null,
     topAgent: null,
     models: [],
+    totalTokens: 0,
     agents: [],
     series: [],
     sessionCount: 0,
@@ -287,6 +441,17 @@ async function loadData(): Promise<{ data: UsageData; cfg: Config }> {
   if (!cached) {
     const f = await readJsonFile(CACHE_FILE)
     if (f && typeof f.calls === 'number') cached = { ...f, fromCache: true }
+  }
+  if (cached) {
+    // 老缓存的模型行按新口径重算（token 含缓存流量、按 token 排、前三个），
+    // 占比分母也重算，免得旧缓存少了字段就显示 0。
+    cached.models = (cached.models || [])
+      .map((m: any) => normalizeModel(m))
+      .filter((m: ModelRow) => m.name)
+      .sort((a: ModelRow, b: ModelRow) => b.tokens - a.tokens)
+      .slice(0, 3)
+    cached.topModel = cached.models[0] || null
+    cached.totalTokens = cached.models.reduce((s: number, m: ModelRow) => s + m.tokens, 0)
   }
   if (!cfg.base) {
     const d = cached || emptyData(cfg.period)
@@ -354,22 +519,60 @@ function StatCell({ label, value, sub }: { label: string; value: string; sub: st
   )
 }
 
-function ModelRowView({ m, max, barW }: { m: ModelRow; max: number; barW: number }) {
-  const frac = max > 0 ? Math.max(0.04, m.calls / max) : 0
+// 网页 Usage 页排行行的配色（--c1..--c7，浅色主题）
+const MODEL_COLORS = [
+  'rgba(79,70,229,1)',
+  'rgba(14,165,233,1)',
+  'rgba(16,185,129,1)',
+  'rgba(245,158,11,1)',
+  'rgba(236,72,153,1)',
+  'rgba(139,92,246,1)',
+  'rgba(100,116,139,1)',
+]
+
+// 网页排行行的样式：色块 + 模型名（全名，带供应商前缀）+ 右边 token 数；
+// 下面是按第一名算占比的同色条；再下面是灰色明细行（请求 · 费用 ·
+// 速度 · 首字 · 命中率 · 占比 · 失败），没有的项不写。
+// 注意：一段 Text 只能一种颜色，所以失败次数跟在明细里是灰色的，
+// 做不到网页那样单独标红。
+function ModelRowView({
+  m,
+  index,
+  max,
+  totalTokens,
+  barW,
+}: {
+  m: ModelRow
+  index: number
+  max: number
+  totalTokens: number
+  barW: number
+}) {
+  const color = MODEL_COLORS[index % MODEL_COLORS.length]
+  const frac = max > 0 ? Math.max(0.015, m.tokens / max) : 0
   return (
     <VStack alignment="leading" spacing={2}>
       <HStack alignment="center" spacing={4}>
-        <Text font={12} fontWeight="semibold">{shortModelName(m.name)}</Text>
-        <Text font={11} foregroundStyle="secondaryLabel">
-          {m.sub}
+        <Text
+          font={10}
+          frame={{ width: 10, height: 10 }}
+          background={{ shape: { type: 'rect', cornerRadius: 2 }, style: color }}
+        >
+          {' '}
+        </Text>
+        <Text font={12} fontWeight="semibold" minScaleFactor={0.85}>
+          {m.name}
         </Text>
         <Spacer />
-        <Text font={12}>{fmtNum(m.calls)} 次</Text>
+        <Text font={12} fontWeight="bold">{fmtTokens(m.tokens)}</Text>
       </HStack>
       <ZStack alignment="leading">
         <Capsule frame={{ width: barW, height: 5 }} fill="rgba(0,0,0,0.08)" />
-        <Capsule frame={{ width: Math.max(5, barW * frac), height: 5 }} fill="rgba(17,17,17,0.85)" />
+        <Capsule frame={{ width: Math.max(5, barW * frac), height: 5 }} fill={color} />
       </ZStack>
+      <Text font={11} foregroundStyle="secondaryLabel">
+        {modelDetails(m, totalTokens)}
+      </Text>
     </VStack>
   )
 }
@@ -476,28 +679,23 @@ function CompactView({ data }: { data: UsageData }) {
 
 function LargeView({ data }: { data: UsageData }) {
   const online = !data.error || data.fromCache
-  const max = data.series.length ? Math.max(...data.series, 1) : 1
   return (
-    <VStack alignment="leading" spacing={10} padding={20}>
+    <VStack alignment="leading" spacing={8} padding={16}>
       <Header data={data} online={online} />
       <HStack alignment="top" spacing={16}>
         <StatCell label="请求" value={fmtNum(data.calls)} sub={data.errors > 0 ? `失败 ${data.errors}` : `${data.sessionCount} 个会话`} />
         <StatCell label="Token" value={fmtTokens(data.tokens)} sub={`输入 ${fmtTokens(data.input)} · 输出 ${fmtTokens(data.output)}`} />
         <StatCell label="费用" value={fmtCost(data.cost)} sub="美元" />
       </HStack>
-      {data.series.length > 1 && (
-        <HStack alignment="bottom" spacing={3}>
-          {data.series.map((v, i) => (
-            <Capsule
-              key={i}
-              fill="rgba(17,17,17,0.75)"
-              frame={{ width: 12, height: Math.max(4, Math.round((v / max) * 36)) }}
-            />
-          ))}
-        </HStack>
-      )}
       {data.models.map((m, i) => (
-        <ModelRowView key={i} m={m} max={data.models[0] ? data.models[0].calls : 1} barW={Widget.displaySize.width - 40} />
+        <ModelRowView
+          key={i}
+          m={m}
+          index={i}
+          max={data.models[0] ? data.models[0].tokens : 1}
+          totalTokens={data.totalTokens}
+          barW={Widget.displaySize.width - 32}
+        />
       ))}
       {data.topAgent && (
         <Text font={12} foregroundStyle="secondaryLabel">
