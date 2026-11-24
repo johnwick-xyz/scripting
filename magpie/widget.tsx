@@ -77,12 +77,6 @@ function nextSlot(now: Date): Date {
   return s
 }
 
-// 模型名只留最后一段：nvidia/llama-3.3-70b-instruct -> llama-3.3-70b-instruct
-function shortModelName(name: string): string {
-  const i = name.lastIndexOf('/')
-  return i >= 0 ? name.slice(i + 1) : name
-}
-
 interface ModelRow {
   name: string
   sub: string
@@ -519,6 +513,13 @@ function StatCell({ label, value, sub }: { label: string; value: string; sub: st
   )
 }
 
+// 模型名只留最后一段，不带供应商前缀：
+// nvidia/nemotron-3.5-super-vl:free -> nemotron-3.5-super-vl:free
+function shortModelName(name: string): string {
+  const i = name.lastIndexOf('/')
+  return i >= 0 ? name.slice(i + 1) : name
+}
+
 // 网页 Usage 页排行行的配色（--c1..--c7，浅色主题）
 const MODEL_COLORS = [
   'rgba(79,70,229,1)',
@@ -541,12 +542,18 @@ function ModelRowView({
   max,
   totalTokens,
   barW,
+  nameFont = 12,
+  nameScale = 0.85,
+  showDetails = true,
 }: {
   m: ModelRow
   index: number
   max: number
   totalTokens: number
   barW: number
+  nameFont?: number
+  nameScale?: number
+  showDetails?: boolean
 }) {
   const color = MODEL_COLORS[index % MODEL_COLORS.length]
   const frac = max > 0 ? Math.max(0.015, m.tokens / max) : 0
@@ -560,114 +567,49 @@ function ModelRowView({
         >
           {' '}
         </Text>
-        <Text font={12} fontWeight="semibold" minScaleFactor={0.85}>
-          {m.name}
+        <Text font={nameFont} fontWeight="semibold" minScaleFactor={nameScale}>
+          {shortModelName(m.name)}
         </Text>
         <Spacer />
-        <Text font={12} fontWeight="bold">{fmtTokens(m.tokens)}</Text>
+        <Text font={nameFont} fontWeight="bold">{fmtTokens(m.tokens)}</Text>
       </HStack>
       <ZStack alignment="leading">
         <Capsule frame={{ width: barW, height: 5 }} fill="rgba(0,0,0,0.08)" />
         <Capsule frame={{ width: Math.max(5, barW * frac), height: 5 }} fill={color} />
       </ZStack>
-      <Text font={11} foregroundStyle="secondaryLabel">
-        {modelDetails(m, totalTokens)}
-      </Text>
+      {showDetails && (
+        <Text font={11} foregroundStyle="secondaryLabel">
+          {modelDetails(m, totalTokens)}
+        </Text>
+      )}
     </VStack>
   )
-}
-
-// 模型名太长时从中间的 - 处断成两行：nemotron-nano-9b-v2 -> [nemotron-, nano-9b-v2]
-function splitModelName(name: string): [string, string] {
-  const s = shortModelName(name)
-  if (s.length <= 16) return [s, '']
-  const mid = Math.floor(s.length / 2)
-  let cut = -1
-  for (let d = 0; d <= mid; d++) {
-    if (s[mid + d] === '-') {
-      cut = mid + d + 1
-      break
-    }
-    if (s[mid - d] === '-') {
-      cut = mid - d + 1
-      break
-    }
-  }
-  if (cut <= 0 || cut >= s.length) cut = 16
-  return [s.slice(0, cut), s.slice(cut)]
 }
 
 function CompactView({ data }: { data: UsageData }) {
   const online = !data.error || data.fromCache
   const W = Widget.displaySize.width
   const isSmall = Widget.family === 'systemSmall' || (!Widget.family && W < 200)
-  const modelLines = data.topModel ? splitModelName(data.topModel.name) : ['', '']
   return (
     <VStack
       alignment="leading"
-      spacing={isSmall ? 2 : 6}
+      spacing={isSmall ? 4 : 6}
       padding={{ horizontal: 12, vertical: 8 }}
     >
       <Header data={data} online={online} minimal={isSmall} />
-      <HStack alignment="center" spacing={4}>
-        <Text font={isSmall ? 24 : 30} fontWeight="bold">{fmtNum(data.calls)}</Text>
-        <Text font={12} foregroundStyle="secondaryLabel">
-          次请求
-        </Text>
-        {data.errors > 0 && (
-          <Text font={12} foregroundStyle="rgba(239,68,68,1)">
-            失败 {data.errors}
-          </Text>
-        )}
-      </HStack>
-      {isSmall ? (
-        <HStack alignment="center" spacing={4}>
-          <HStack alignment="center" spacing={2}>
-            <Text font={9} foregroundStyle="secondaryLabel">
-              Token
-            </Text>
-            <Text font={9} fontWeight="semibold">{fmtTokens(data.tokens)}</Text>
-          </HStack>
-          <HStack alignment="center" spacing={2}>
-            <Text font={9} foregroundStyle="secondaryLabel">
-              费用
-            </Text>
-            <Text font={9} fontWeight="semibold">{fmtCost(data.cost)}</Text>
-          </HStack>
-        </HStack>
-      ) : (
-        <HStack alignment="center" spacing={12}>
-          <HStack alignment="center" spacing={3}>
-            <Text font={12} foregroundStyle="secondaryLabel">
-              Token
-            </Text>
-            <Text font={12} fontWeight="semibold">{fmtTokens(data.tokens)}</Text>
-          </HStack>
-          <HStack alignment="center" spacing={3}>
-            <Text font={12} foregroundStyle="secondaryLabel">
-              费用
-            </Text>
-            <Text font={12} fontWeight="semibold">{fmtCost(data.cost)}</Text>
-          </HStack>
-        </HStack>
-      )}
-      {data.topModel &&
-        (isSmall ? (
-          <VStack alignment="leading" spacing={1}>
-            <Text font={10} foregroundStyle="secondaryLabel">
-              {modelLines[0]}
-            </Text>
-            {modelLines[1] ? (
-              <Text font={10} foregroundStyle="secondaryLabel">
-                {modelLines[1]}
-              </Text>
-            ) : null}
-          </VStack>
-        ) : (
-          <Text font={12} foregroundStyle="secondaryLabel">
-            最多：{shortModelName(data.topModel.name)} · {fmtNum(data.topModel.calls)} 次
-          </Text>
-        ))}
+      {data.models.map((m, i) => (
+        <ModelRowView
+          key={i}
+          m={m}
+          index={i}
+          max={data.models[0] ? data.models[0].tokens : 1}
+          totalTokens={data.totalTokens}
+          barW={W - 24}
+          nameFont={isSmall ? 10 : 12}
+          nameScale={isSmall ? 0.7 : 0.85}
+          showDetails={false}
+        />
+      ))}
       <Spacer />
       <Text font={11} foregroundStyle="secondaryLabel">
         {data.updatedAt ? `${data.updatedAt} 更新` : '暂无数据'}
