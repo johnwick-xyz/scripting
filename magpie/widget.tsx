@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct, unwrapCards } from './utils'
+import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct, unwrapCards, cardHasQuota } from './utils'
 
 // Magpie Scripting 小组件（2026-11-26 新版：截图同款设计）
 // Magpie 是 yetone 的本地 AI 网关（Docker 跑在 john 的 Debian 服务器上，
@@ -90,7 +90,7 @@ const CACHE_KEY = 'magpie_usage'
 const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 const FETCH_TIMEOUT = 8000
 // 统计口径：当天（period=today，Magpie 里 Today="today"，
 // 从今天 0 点算起，series 按小时）。注意 Magpie 的周期值不是
@@ -574,7 +574,9 @@ async function loadData(): Promise<{ data: UsageData; cfg: Config }> {
     sessionCount: Number(j.sessionCount) || 0,
     version,
     modelCount,
-    cards: unwrapCards(cards).map(normalizeCard).filter((c: QuotaCard) => c.name),
+    cards: unwrapCards(cards)
+      .map(normalizeCard)
+      .filter((c: QuotaCard) => c.name && cardHasQuota(c)),
     updatedAt: fmtTimeShort(now),
     updatedTs: now.getTime(),
     fromCache: false,
@@ -934,10 +936,15 @@ function LargeView({ data }: { data: UsageData }) {
   const W = Widget.displaySize.width
   const contentW = W - 32
   const barW = contentW - 48
+  const cards = data.cards.slice(0, 3)
+  // 大图最多显示 3 张额度卡，热门模型只留前 3（2026-11-26 john 定）。
+  // 3 张卡时收紧布局，不然塞不进 345pt：上下留白 12→8、间距 6→3；
+  // 2 张及以下还是原来的宽松版（留白 12、间距 6、前 3 模型）。
+  const tight = cards.length >= 3
   return (
-    <VStack alignment="leading" spacing={6} padding={{ horizontal: 16, vertical: 12 }}>
+    <VStack alignment="leading" spacing={tight ? 3 : 6} padding={{ horizontal: 16, vertical: tight ? 8 : 12 }}>
       <Header data={data} />
-      {data.cards.slice(0, 2).map((c, i) => (
+      {cards.map((c, i) => (
         <QuotaCardView key={i} data={data} card={c} barW={barW} />
       ))}
       {data.cards.length === 0 && data.cardsError ? (
@@ -949,7 +956,7 @@ function LargeView({ data }: { data: UsageData }) {
       <StatsRow data={data} />
       <SubLine data={data} />
       <Hairline w={contentW} />
-      <HotModels data={data} />
+      <HotModels data={data} count={3} />
       <Spacer />
       <HStack alignment="center" spacing={4}>
         {footerLeft(data) ? (
