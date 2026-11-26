@@ -144,6 +144,22 @@ async function fetchWithTimeout(url: string, options: any, ms: number): Promise<
   return res
 }
 
+// 超时兜底：AbortSignal.timeout 未必能断开 Scripting 的 fetch，
+// 光靠它，取价一 hang 预览就一直转圈。
+// 再加一层 Promise.race，超时就直接 reject，
+// 外面 catch 住就显示缓存价，绝不转圈。
+// setTimeout 在小组件里不一定准，但有它比没有强；
+// 它不存在就退回原 promise（只靠 AbortSignal）。
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  if (typeof setTimeout !== 'function') return p
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error('超时')), ms)
+    }),
+  ])
+}
+
 async function getCookie(): Promise<string> {
   // 1) App 存进 Storage 共享域的 Cookie
   try {
@@ -630,8 +646,13 @@ function ErrorView({ message }: { message: string }) {
   if (needFetch && cached) {
     // 有缓存时先拉，拉不到就用缓存顶上
     try {
-      const cookie = await getCookie()
-      const p = await fetchPrice(cached.sku, cookie)
+      const p = await withTimeout(
+        (async () => {
+          const cookie = await getCookie()
+          return fetchPrice(cached.sku, cookie)
+        })(),
+        20000,
+      )
       const d = new Date()
       const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
       const history: PriceEntry[] = Array.isArray(cached.history) ? cached.history.slice() : []
@@ -685,9 +706,14 @@ function ErrorView({ message }: { message: string }) {
   }
   // 完全没有缓存（第一次用）：直接拉一次，拉不到就提示打开 App
   try {
-    const cookie = await getCookie()
     const sku = await getSku()
-    const p = await fetchPrice(sku, cookie)
+    const p = await withTimeout(
+      (async () => {
+        const cookie = await getCookie()
+        return fetchPrice(sku, cookie)
+      })(),
+      20000,
+    )
     const d = new Date()
     const pad = (n: number) => (n < 10 ? '0' + n : '' + n)
     const data: WidgetData = {
