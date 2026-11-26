@@ -15,7 +15,7 @@ import {
   useEffect,
   useState,
 } from 'scripting'
-import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct, unwrapCards } from './utils'
+import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct, unwrapCards, cardHasQuota } from './utils'
 
 // Magpie 设置页（App 内打开）
 // 填服务器地址和网关 Key，点“刷新用量”手动拉一次。
@@ -48,7 +48,7 @@ const CACHE_KEY = 'magpie_usage'
 const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
-const CACHE_VERSION = 4
+const CACHE_VERSION = 5
 const FETCH_TIMEOUT = 8000
 const PERIOD = 'today'
 const WEEK_PERIOD = '7d'
@@ -409,7 +409,9 @@ async function fetchAll(base: string, key: string): Promise<UsageData> {
     sessionCount: Number(j.sessionCount) || 0,
     version,
     modelCount,
-    cards: unwrapCards(cards).map(normalizeCard).filter((c: QuotaCard) => c.name),
+    cards: unwrapCards(cards)
+      .map(normalizeCard)
+      .filter((c: QuotaCard) => c.name && cardHasQuota(c)),
     updatedAt: fmtTimeShort(now),
     updatedTs: now.getTime(),
     fromCache: false,

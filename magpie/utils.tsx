@@ -80,3 +80,51 @@ export function unwrapCards(raw: any): any[] {
   if (raw && Array.isArray(raw.data)) return raw.data
   return []
 }
+
+// 额度卡过滤：免费又没额度的不显示（比如 OpenRouter 免费，
+// 余额/用量全是 0），只留有积分/额度的卡（WorkBuddy、ChatGPT、
+// Codex、CodeArts 这种）。
+// 一张卡算“有额度”，只要满足任一条：
+//   - 有报错（读失败的卡要露出来，不能悄悄藏掉）；
+//   - 任一窗口有总量（limit）、已用（amount）、已用占比（used）、
+//     余额（balance）大于 0；
+//   - 任一窗口有重置日（resetsAt）或过期点数（runsOut）——
+//     比如 Codex 刚重置、还没用的时候 used 是 0，但 12/19 重置
+//     说明它是个真订阅，不能因为 used=0 就藏起来；
+//   - 余额行或积分明细里有大于 0 的数字（“余 500/500”“$5.00”）。
+// 全是 0、又没重置日、余额也是 $0 的，就藏起来。
+export function cardHasQuota(c: {
+  error?: string
+  windows?: any[]
+  balance?: string
+  balanceParts?: { text?: string }[]
+}): boolean {
+  if (c.error) return true
+  const ws = Array.isArray(c.windows) ? c.windows : []
+  for (const w of ws) {
+    if (
+      (Number(w.limit) || 0) > 0 ||
+      (Number(w.amount) || 0) > 0 ||
+      (Number(w.used) || 0) > 0 ||
+      (w.balance != null && Number(w.balance) > 0) ||
+      (Number(w.resetsAt) || 0) > 0 ||
+      (Number(w.runsOut) || 0) > 0
+    ) {
+      return true
+    }
+  }
+  if (hasPositiveNumber(c.balance)) return true
+  const parts = Array.isArray(c.balanceParts) ? c.balanceParts : []
+  for (const p of parts) {
+    if (hasPositiveNumber(p.text)) return true
+  }
+  return false
+}
+
+// 字符串里有没有大于 0 的数字：“余 500/500”有，“$0.00”“余 0/0”没有。
+function hasPositiveNumber(s: any): boolean {
+  if (typeof s !== 'string' || !s) return false
+  const nums = s.match(/[\d,]+(?:\.\d+)?/g)
+  if (!nums) return false
+  return nums.some((t) => Number(t.replace(/,/g, '')) > 0)
+}
