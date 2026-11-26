@@ -16,6 +16,7 @@ import {
   useEffect,
   useState,
 } from 'scripting'
+import { parseSlots, slotsLabel } from './utils'
 
 const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
 const prefPath = Path.join(root, 'preference.json')
@@ -82,10 +83,10 @@ async function downloadImage(url: string): Promise<string> {
   return ''
 }
 
-// 更新时间段：9-22 点，每 6 小时一次，
-// 也就是 9:00、15:00、21:00 三个点。
-function nextSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+// 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
+// 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
+// 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
+function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
@@ -93,7 +94,7 @@ function nextSlot(now: Date): Date {
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
-  d.setHours(9, 0, 0, 0)
+  d.setHours(slots[0], 0, 0, 0)
   return d
 }
 
@@ -102,21 +103,20 @@ function fmtSlot(d: Date): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function isUpdateWindow(now: Date): boolean {
+function isUpdateWindow(now: Date, slots: number[]): boolean {
   const h = now.getHours()
-  return h >= 9 && h < 22
+  return h >= slots[0] && h < slots[slots.length - 1] + 1
 }
 
-// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
-function currentSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+// 当前这个更新点：最近过去的那个。
+function currentSlot(now: Date, slots: number[]): Date {
   let slot = -1
   for (const h of slots) {
     if (now.getHours() >= h) slot = h
   }
   const d = new Date(now)
   if (slot === -1) d.setDate(d.getDate() - 1)
-  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  d.setHours(slot === -1 ? slots[slots.length - 1] : slot, 0, 0, 0)
   return d
 }
 
@@ -189,35 +189,39 @@ function App() {
   const [imageUrl, setImageUrl] = useState<string>('')
   const [imageLocal, setImageLocal] = useState<string>('')
   const [cookie, setCookie] = useState<string>('')
+  const [slotsText, setSlotsText] = useState<string>('9,15,21')
   const [loaded, setLoaded] = useState(false)
   const [price, setPrice] = useState<string>('')
   const [status, setStatus] = useState<string>('打开 App 后自动拉价…')
 
   // auto=true 是打开 App 时自动拉，manual（点“刷新价格”）永远拉。
-  // 自动拉只在 9-22 点、且上次拉取在当前这个更新点（9:00/15:00/21:00）
-  // 之前才拉。不能用“6 小时内已拉过”来判断——手动点一次刷新，
+  // 自动拉只在更新窗口内、且上次拉取在当前这个更新点之前才拉。
+  // 不能用“6 小时内已拉过”来判断——手动点一次刷新，
   // updatedTs 就刷成现在，小组件到下一个更新点一看“才过 4 小时”
   // 就直接跳过，自动更新就永远不跑（2026-11-22 15:00 就是这么错过的）。
   async function refresh(auto = false) {
     const now0 = new Date()
+    const slots = parseSlots(slotsText)
     if (auto) {
-      if (!isUpdateWindow(now0)) {
-        setStatus(`不在更新时间（9-22点），下次：${fmtSlot(nextSlot(now0))}`)
+      if (!isUpdateWindow(now0, slots)) {
+        setStatus(
+          `不在更新时间（${slots[0]}-${slots[slots.length - 1] + 1}点），下次：${fmtSlot(nextSlot(now0, slots))}`,
+        )
         return
       }
       try {
         const cached: any = Storage.get('jd_price_cache', { shared: true })
         const ts = cached ? (typeof cached === 'string' ? JSON.parse(cached).updatedTs : cached.updatedTs) : null
-        if (ts && ts >= currentSlot(now0).getTime()) {
-          setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0))}`)
+        if (ts && ts >= currentSlot(now0, slots).getTime()) {
+          setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0, slots))}`)
           return
         }
       } catch (e) {}
       try {
         if (FileManager.existsSync(cachePath)) {
           const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
-          if (cached.updatedTs && cached.updatedTs >= currentSlot(now0).getTime()) {
-            setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0))}`)
+          if (cached.updatedTs && cached.updatedTs >= currentSlot(now0, slots).getTime()) {
+            setStatus(`这个更新点已经拉过，下次：${fmtSlot(nextSlot(now0, slots))}`)
             return
           }
         }
@@ -288,7 +292,7 @@ function App() {
       Storage.set('jd_sku', sku, { shared: true })
       if (ck) Storage.set('jd_cookie', ck, { shared: true })
       setPrice(p.toFixed(2))
-      setStatus(`已更新：${updatedAt}，下次：${fmtSlot(nextSlot(new Date()))}`)
+      setStatus(`已更新：${updatedAt}，下次：${fmtSlot(nextSlot(new Date(), slots))}`)
       Widget.reloadAll()
     } catch (e) {
       setStatus('拉取失败：' + String(e))
@@ -302,10 +306,17 @@ function App() {
         if (pref.sku) setSku(String(pref.sku))
         if (pref.name) setName(pref.name)
         if (pref.cookie) setCookie(pref.cookie)
+        if (pref.slots) setSlotsText(String(pref.slots))
       } catch (e) {
         console.error('Failed to parse preference', e)
       }
     }
+    // 共享域优先：两边共用同一份刷新时间，改一边两边都生效，
+    // 共享域里的值会覆盖上面 preference.json 里旧的那份。
+    try {
+      const v: any = Storage.get('jd_refresh_slots', { shared: true })
+      if (v != null && String(v).trim()) setSlotsText(String(v))
+    } catch (e) {}
     if (FileManager.existsSync(cachePath)) {
       try {
         const cached = JSON.parse(FileManager.readAsStringSync(cachePath) || '{}')
@@ -325,15 +336,16 @@ function App() {
     if (!FileManager.existsSync(root)) {
       FileManager.createDirectorySync(root, true)
     }
-    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, cookie }))
+    FileManager.writeAsStringSync(prefPath, JSON.stringify({ sku, name, cookie, slots: slotsText }))
     try {
       Storage.set('jd_sku', sku, { shared: true })
       if (cookie) Storage.set('jd_cookie', cookie, { shared: true })
+      Storage.set('jd_refresh_slots', slotsText, { shared: true })
     } catch (e) {}
     Widget.reloadAll()
-  }, [sku, name, cookie, loaded])
+  }, [sku, name, cookie, slotsText, loaded])
 
-  // 设置加载完后自动拉一次价（按 9-22 点、每 6 小时那个规则）
+  // 设置加载完后自动拉一次价（按更新点那个规则）
   useEffect(() => {
     if (!loaded) return
     refresh(true)
@@ -384,9 +396,23 @@ function App() {
             没登录的请求 p.3.cn 直接没反应。先手动粘贴一次就能用；也可以用 Loon 抓：装好 Jd.lpx 后，打开京东 App 刷一次商品页，Cookie 会自动写进 BoxJs，小组件会自动读，不用填这里。Cookie 只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
+        <Section header={<Text>刷新时间</Text>}>
+          <HStack>
+            <Text>更新时间点</Text>
+            <TextField title="9,15,21" value={slotsText} onChanged={setSlotsText} />
+          </HStack>
+          <Text foregroundStyle="secondaryLabel">
+            填整点小时，用逗号隔开，例如 9,15,21；也可以写 9:00,15:00（分钟忽略）。小组件会在这些时间点各拉一次新数据。
+          </Text>
+          <Text foregroundStyle="secondaryLabel">
+            当前生效：{slotsLabel(parseSlots(slotsText))}。和京豆那个小组件共用同一份设置，在这边改了，那边也跟着变。
+          </Text>
+          <Button title="恢复默认（9,15,21）" action={() => setSlotsText('9,15,21')} />
+        </Section>
         <Section header={<Text>说明</Text>}>
           <Text foregroundStyle="secondaryLabel">
-            小组件到更新点（9:00、15:00、21:00）会自己拉一次新价，用的是系统原生超时，拉不到就显示旧价格，不会转圈。打开 App 时也按 9-22 点、每 6 小时这个规则自动拉；点“刷新价格”随时都能手动拉。
+            小组件到更新点（{slotsLabel(parseSlots(slotsText))}）会自己拉一次新价，用的是系统原生超时，拉不到就显示旧价格，不会转圈。打开 App
+            时也按更新点这个规则自动拉；点“刷新价格”随时都能手动拉。
           </Text>
         </Section>
         <Section>

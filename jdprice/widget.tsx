@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { rpt } from './utils'
+import { rpt, parseSlots, DEFAULT_SLOTS } from './utils'
 
 // 京东价格监控 Scripting 小组件
 //
@@ -19,7 +19,7 @@ import { rpt } from './utils'
 //    因为 setTimeout 在小组件里靠不住，之前就是它
 //    让预览一直打圈圈。原生超时 8 秒没返回就断开，
 //    失败了就直接显示缓存价，绝不转圈。
-// 2) App 里拉价（打开 App 时，9-22 点、每 6 小时一次），
+// 2) App 里拉价（打开 App 时，到更新点就拉一次），
 //    拉到就写进 Storage 共享域 + 本地文件，小组件读缓存。
 // 两边共用同一份缓存（Storage 'jd_price_cache'，shared: true）。
 // App 和小组件是两次分开的执行，文件传不过去，
@@ -54,10 +54,10 @@ interface WidgetData {
 const DEFAULT_IMAGE_URL =
   'https://img10.360buyimg.com/img/jfs/t1/572241/19/12897/149428/6afed993F3dda89e5/008332032016639f.jpg'
 
-// 更新时间段：9-22 点，每 6 小时一次，
-// 也就是 9:00、15:00、21:00 三个点。
-function nextSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+// 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
+// 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
+// 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
+function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
@@ -65,29 +65,46 @@ function nextSlot(now: Date): Date {
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
-  d.setHours(9, 0, 0, 0)
+  d.setHours(slots[0], 0, 0, 0)
   return d
 }
 
-function isUpdateWindow(now: Date): boolean {
+function isUpdateWindow(now: Date, slots: number[]): boolean {
   const h = now.getHours()
-  return h >= 9 && h < 22
+  return h >= slots[0] && h < slots[slots.length - 1] + 1
 }
 
-// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
+// 当前这个更新点：最近过去的那个。
 // 比如现在 15:30，当前点就是今天 15:00；
 // 现在 10:00，当前点就是今天 9:00；
 // 现在 8:30，还没到今天 9:00，当前点就是昨天 21:00。
-function currentSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+function currentSlot(now: Date, slots: number[]): Date {
   let slot = -1
   for (const h of slots) {
     if (now.getHours() >= h) slot = h
   }
   const d = new Date(now)
   if (slot === -1) d.setDate(d.getDate() - 1)
-  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  d.setHours(slot === -1 ? slots[slots.length - 1] : slot, 0, 0, 0)
   return d
+}
+
+// 读用户设的更新时间点：1) 共享域（两个 App 都往这里写），
+// 2) 本脚本的 preference.json，3) 默认 9,15,21。
+function getSlots(): number[] {
+  try {
+    const v: any = Storage.get('jd_refresh_slots', { shared: true })
+    if (v != null && String(v).trim()) return parseSlots(v)
+  } catch (e) {}
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.slots != null && String(pref.slots).trim()) return parseSlots(pref.slots)
+    }
+  } catch (e) {}
+  return DEFAULT_SLOTS.slice()
 }
 
 function fmt(n: number): string {
@@ -583,7 +600,7 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-// 主流程：先读缓存；到更新点（9-22 点、当前这个更新点之后还没拉过）
+// 主流程：先读缓存；到更新点（在更新窗口内、且上次更新在当前这个更新点之前）
 // 就自己拉一次新价，拉到了更新缓存，拉不到就显示旧缓存，
 // 绝不等、绝不转圈。最后告诉系统下一个更新点再跑一次。
 // 注意：这里不能用“距上次超过 6 小时”来判断——
@@ -593,12 +610,13 @@ function ErrorView({ message }: { message: string }) {
 // 改成按更新点判断：只要上次更新在当前这个更新点之前，就拉。
 ;(async () => {
   const now = new Date()
+  const slots = getSlots()
   const cached = readCached()
   const needFetch =
     !cached ||
     cached.price == null ||
-    (isUpdateWindow(now) &&
-      (!cached.updatedTs || cached.updatedTs < currentSlot(now).getTime()))
+    (isUpdateWindow(now, slots) &&
+      (!cached.updatedTs || cached.updatedTs < currentSlot(now, slots).getTime()))
   if (needFetch && cached) {
     // 有缓存时先拉，拉不到就用缓存顶上
     try {
@@ -631,7 +649,7 @@ function ErrorView({ message }: { message: string }) {
       saveCache(data)
       Widget.present(<WidgetView data={data} />, {
         policy: 'after',
-        date: nextSlot(new Date()),
+        date: nextSlot(new Date(), slots),
       } as any)
       return
     } catch (e) {
@@ -651,7 +669,7 @@ function ErrorView({ message }: { message: string }) {
     cached.fromCache = true
     Widget.present(<WidgetView data={cached} />, {
       policy: 'after',
-      date: nextSlot(new Date()),
+      date: nextSlot(new Date(), slots),
     } as any)
     return
   }
@@ -678,7 +696,7 @@ function ErrorView({ message }: { message: string }) {
     saveCache(data)
     Widget.present(<WidgetView data={data} />, {
       policy: 'after',
-      date: nextSlot(new Date()),
+      date: nextSlot(new Date(), slots),
     } as any)
     return
   } catch (e) {}
