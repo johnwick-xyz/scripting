@@ -108,7 +108,12 @@ fn(opts, (err, resp, data) => {
     const code = parsed.code;
     const ok = code === 0 || code === 200 || code === '0' || code === '200' || parsed.success === true;
     if (ok) { markSigned(); doneNotify('传祺签到成功', '', msg); return; }
-    failNotify('传祺签到失败', 'HTTP ' + status, msg || flat.slice(0, 120));
+    // 失败时把关键字段直接报出来，别只贴一段原始 JSON：
+    // 上次就是只贴了前 120 个字符，code 在后面被截掉了，看不出原因。
+    // 再把完整响应存下来（trumpchi_last_resp），方便之后排查。
+    try { $persistentStore.write(text, 'trumpchi_last_resp'); } catch (e) {}
+    const info = 'code=' + code + ' success=' + parsed.success + ' msg=' + (msg || '无') + ' data=' + (parsed.data == null ? 'null' : JSON.stringify(parsed.data).slice(0, 60));
+    failNotify('传祺签到失败', 'HTTP ' + status, info);
     return;
   }
 

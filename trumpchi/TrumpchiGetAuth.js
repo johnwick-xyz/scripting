@@ -41,7 +41,7 @@ if (/sign|check[-_]?in/i.test(url)) {
   const req = { url: url, method: method, headers: headers, body: $request.body || '' };
   const raw = JSON.stringify(req);
   if (method === 'POST') {
-    save(SIGN_REQ_KEY, raw, '传祺签到请求已记录', '明天 8:00 自动签到', true);
+    save(SIGN_REQ_KEY, raw, '传祺签到请求已记录', '明天 9:00–9:45 之间自动签到', true);
   } else {
     save(SIGN_INFO_KEY, raw, '传祺签到状态请求已记录', '', true);
   }
