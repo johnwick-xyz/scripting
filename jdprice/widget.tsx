@@ -117,16 +117,21 @@ function fmtTime(t: number): string {
   return `${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function changeInfo(data: WidgetData): { text: string; up: boolean; down: boolean } {
+function changeInfo(data: WidgetData): { text: string; short: string; up: boolean; down: boolean } {
   if (data.price == null || data.prevPrice == null) {
-    return { text: '首次记录', up: false, down: false }
+    return { text: '首次记录', short: '首次记录', up: false, down: false }
   }
   const diff = data.price - data.prevPrice
-  if (Math.abs(diff) < 0.005) return { text: '没变', up: false, down: false }
+  if (Math.abs(diff) < 0.005) return { text: '没变', short: '没变', up: false, down: false }
   const pct = (diff / data.prevPrice) * 100
   const sign = diff > 0 ? '+' : ''
+  const delta = `${diff > 0 ? '▲' : '▼'} ${sign}${fmt(diff)}`
   return {
-    text: `${diff > 0 ? '▲' : '▼'} ${sign}${fmt(diff)} (${sign}${pct.toFixed(1)}%)`,
+    text: `${delta} (${sign}${pct.toFixed(1)}%)`,
+    // 小图那格只有 73pt 宽（155-24留白-50图-8间距），
+    // 全文 "▲ +20.00 (+4.2%)" 94pt 放不下会被截成 "▲ +20.00…"，
+    // 小图只显示涨跌额，不带百分比（49.5pt，放得下）。
+    short: delta,
     up: diff > 0,
     down: diff < 0,
   }
@@ -297,10 +302,12 @@ function PriceBlock({
   data,
   big,
   compact,
+  tiny,
 }: {
   data: WidgetData
   big: number
   compact?: boolean
+  tiny?: boolean
 }) {
   const ch = changeInfo(data)
   const chColor = ch.up
@@ -332,8 +339,9 @@ function PriceBlock({
         fontWeight="semibold"
         foregroundStyle={chColor as any}
         lineLimit={1}
+        minScaleFactor={0.7}
       >
-        {ch.text}
+        {tiny ? ch.short : ch.text}
       </Text>
     </VStack>
   )
@@ -346,11 +354,13 @@ function PriceRow({
   big,
   imgSize,
   compact,
+  tiny,
 }: {
   data: WidgetData
   big: number
   imgSize: number
   compact?: boolean
+  tiny?: boolean
 }) {
   const img = data.imagePath ? (
     <Image filePath={data.imagePath} resizable frame={{ width: imgSize, height: imgSize }} />
@@ -363,7 +373,7 @@ function PriceRow({
   )
   return (
     <HStack spacing={8}>
-      <PriceBlock data={data} big={big} compact={compact} />
+      <PriceBlock data={data} big={big} compact={compact} tiny={tiny} />
       <Spacer />
       {img}
     </HStack>
@@ -573,7 +583,7 @@ function WidgetView({ data }: { data: WidgetData }) {
         alignment="leading"
       >
         <Header name={data.name} compact />
-        <PriceRow data={data} big={24} imgSize={50} compact />
+        <PriceRow data={data} big={24} imgSize={50} compact tiny={tiny} />
         <PrevPrices history={data.history} />
         <Spacer />
         <Footer data={data} compact tiny={tiny} />
