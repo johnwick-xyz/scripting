@@ -16,7 +16,7 @@
    `GET https://me-api.jd.com/user_new/info/GetJDUserInfoUnion?isLogin=1`，带 Cookie，
    返回 `data.assetInfo.beanNum`（京豆总数）、`data.userInfo.baseInfo.nickname`、`headImageUrl`
 2. 京豆收支明细：
-   `POST https://bean.m.jd.com/beanDetail/detail.json`，body `page=N`，带 Cookie，
+   `POST https://api.m.jd.com/client.action?functionId=getJingBeanBalanceDetail`，body `body=<URL编码的 {"pageSize":"20","page":"N"}>&appid=ld`，带 Cookie，用京东 App 的 UA，回来是 `detailList[]`。原来那个 `POST https://bean.m.jd.com/beanDetail/detail.json`（H5 接口）现在回 403 “file-no.2 conf not found”，不是 Cookie 的问题，是京东那边这个接口不给走了，只当备用。
    返回 `code '0'`，`jingDetailList[]` 每条有 `date` 和 `amount`（正数=收入，负数=支出）。
    按天汇总最近 7 天：收入 = 正数之和，支出 = 负数之和，净收入 = 收入 + 支出。
    翻页到日期超出范围或没数据就停，最多 8 页。
@@ -31,11 +31,23 @@ App 写进去的），再读本项目的 `preference.json`，再读 BoxJs `jd_co
 填过一次就不用再填；也可以用 Loon 抓（价格那个项目的 `Jd.lpx`），Cookie 会自动写进 BoxJs。
 Cookie 只存在手机本地，不会上传云端，也不要提交到 GitHub。
 
+**注意：京豆必须登录才能拉。** 价格那个接口（p.3.cn）不用 Cookie 也能拉，
+但京豆这两个接口（用户信息、收支明细）没登录会直接返回 `retcode 1001` / 302 页面，
+所以 BoxJs 里必须先有京东 Cookie：要么在 App 里粘贴一次，要么用 Loon 装
+价格那个项目的 `Jd.lpx` 抓一次。
+2026-11-22 修过一个 bug：BoxJs 里没有 `jd_cookie` 这个 key、或 BoxJs 没起来时，
+查出来的东西不是 JSON，直接 `res.json()` 会报
+`SyntaxError: JSON Parse error: Unexpected identifier "file"`，整个刷新就崩了。
+现在改成先读文本、解析失败就当这个 key 没有，继续找下一个，不会再崩；
+明细接口返回 302 的 HTML 时也只停掉翻页，不影响京豆总数显示。
+
 ## 更新
 
-小组件到更新点（9:00、15:00、21:00）会自己拉一次新数据，用的是系统原生超时
-`AbortSignal.timeout()`，拉不到就显示旧数据，不会转圈。打开 App 时也按 9-22 点、
-每 6 小时这个规则自动拉；点“刷新京豆”随时都能手动拉。
+小组件到更新点会自己拉一次新数据，用的是系统原生超时
+`AbortSignal.timeout()`，拉不到就显示旧数据，不会转圈。更新时间点可以在 App 里手动改
+（“刷新时间”一栏，填整点小时，用逗号隔开，例如 9,15,21；也可以写 9:00,15:00，分钟忽略），
+默认 9:00、15:00、21:00；两个京东小组件共用同一份设置，改一边两边都生效。打开 App 时也按
+更新点这个规则自动拉；点“刷新京豆”随时都能手动拉。
 
 头像和小组件里的商品图一样，App 拉到后下载到本地文件，小组件直接读本地图片，
 远程图在小组件里经常加载失败。

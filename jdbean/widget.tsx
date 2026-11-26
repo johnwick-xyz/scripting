@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { rpt } from './utils'
+import { rpt, parseSlots, DEFAULT_SLOTS } from './utils'
 
 // 京东京豆 Scripting 小组件
 // 参考脑瓜（anker1209）的京东合一 v2（JD-in-one-v2.js v2.2.9）
@@ -64,8 +64,10 @@ interface BeanData {
   detailDebug?: string
 }
 
-function nextSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+// 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
+// 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
+// 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
+function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
@@ -73,26 +75,43 @@ function nextSlot(now: Date): Date {
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
-  d.setHours(9, 0, 0, 0)
+  d.setHours(slots[0], 0, 0, 0)
   return d
 }
 
-function isUpdateWindow(now: Date): boolean {
+function isUpdateWindow(now: Date, slots: number[]): boolean {
   const h = now.getHours()
-  return h >= 9 && h < 22
+  return h >= slots[0] && h < slots[slots.length - 1] + 1
 }
 
-// 当前这个更新点：9:00、15:00、21:00 里最近过去的那个。
-function currentSlot(now: Date): Date {
-  const slots = [9, 15, 21]
+// 当前这个更新点：最近过去的那个。
+function currentSlot(now: Date, slots: number[]): Date {
   let slot = -1
   for (const h of slots) {
     if (now.getHours() >= h) slot = h
   }
   const d = new Date(now)
   if (slot === -1) d.setDate(d.getDate() - 1)
-  d.setHours(slot === -1 ? 21 : slot, 0, 0, 0)
+  d.setHours(slot === -1 ? slots[slots.length - 1] : slot, 0, 0, 0)
   return d
+}
+
+// 读用户设的更新时间点：1) 共享域（两个 App 都往这里写），
+// 2) 本脚本的 preference.json，3) 默认 9,15,21。
+function getSlots(): number[] {
+  try {
+    const v: any = Storage.get('jd_refresh_slots', { shared: true })
+    if (v != null && String(v).trim()) return parseSlots(v)
+  } catch (e) {}
+  try {
+    const root = Path.join(FileManager.appGroupDocumentsDirectory, Script.name)
+    const prefPath = Path.join(root, 'preference.json')
+    if (FileManager.existsSync(prefPath)) {
+      const pref = JSON.parse(FileManager.readAsStringSync(prefPath) || '{}')
+      if (pref.slots != null && String(pref.slots).trim()) return parseSlots(pref.slots)
+    }
+  } catch (e) {}
+  return DEFAULT_SLOTS.slice()
 }
 
 function fmtDate(d: Date): string {
@@ -663,17 +682,18 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-// 主流程：先读缓存；到更新点（9-22 点、距上次超过 6 小时）
+// 主流程：先读缓存；到更新点（在更新窗口内、且上次更新在当前这个更新点之前）
 // 就自己拉一次新数据，拉到了更新缓存，拉不到就显示旧缓存，
 // 绝不等、绝不转圈。最后告诉系统下一个更新点再跑一次。
 ;(async () => {
   const now = new Date()
+  const slots = getSlots()
   const cached = readCached()
   const needFetch =
     !cached ||
     cached.total == null ||
-    (isUpdateWindow(now) &&
-      (!cached.updatedTs || cached.updatedTs < currentSlot(now).getTime()))
+    (isUpdateWindow(now, slots) &&
+      (!cached.updatedTs || cached.updatedTs < currentSlot(now, slots).getTime()))
   // 注意：不能用“距上次超过 6 小时”来判断——手动在 App 里点一次刷新，
   // updatedTs 就刷成现在，小组件到下一个更新点一看“才过 4 小时”
   // 就直接跳过，自动更新就永远不跑（价格那个 2026-11-22 15:00
@@ -687,7 +707,7 @@ function ErrorView({ message }: { message: string }) {
       saveCache(data)
       Widget.present(<WidgetView data={data} />, {
         policy: 'after',
-        date: nextSlot(new Date()),
+        date: nextSlot(new Date(), slots),
       } as any)
       return
     } catch (e) {
@@ -696,7 +716,7 @@ function ErrorView({ message }: { message: string }) {
         cached.fromCache = true
         Widget.present(<WidgetView data={cached} />, {
           policy: 'after',
-          date: nextSlot(new Date()),
+          date: nextSlot(new Date(), slots),
         } as any)
         return
       }
@@ -710,7 +730,7 @@ function ErrorView({ message }: { message: string }) {
     cached.fromCache = true
     Widget.present(<WidgetView data={cached} />, {
       policy: 'after',
-      date: nextSlot(new Date()),
+      date: nextSlot(new Date(), slots),
     } as any)
     return
   }
