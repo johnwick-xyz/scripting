@@ -15,13 +15,25 @@ import {
   useEffect,
   useState,
 } from 'scripting'
-import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum } from './utils'
+import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate } from './utils'
 
 // Magpie 设置页（App 内打开）
-// 填服务器地址和网关 Key，选周期，点“刷新用量”手动拉一次。
+// 填服务器地址和网关 Key，点“刷新用量”手动拉一次。
 // 配置存在手机本地 preference.json + 共享 Storage 'magpie_config'，
 // 小组件自己读；网关 Key 只存在手机本地，不会上传云端，
 // 也不要提交到 GitHub。
+//
+// 新版（2026-11-26）和小组件一样拉四个接口，统计周期改成今日：
+//   GET {base}/v1 -> 版本 + 模型数
+//   GET {base}/v1/magpie/usage?period=today -> 今日用量、热门模型、账号用量
+//   GET {base}/v1/magpie/usage?period=7d -> 只取 Totals.calls，当“近 7 日”
+//   GET {base}/v1/magpie/quotas/cards -> 额度卡（Codex、CodeArts）
+//   注意周期值是 today/7d/30d/all，不是 today/week/month/all——
+//   传 period=month 会被当成未知值静默回落到 30d。
+// App 和小组件共用同一份缓存（Storage 'magpie_usage' + cache.json），
+// 两边的字段结构必须一模一样，不然 App 刷新一次就会把缓存里的
+// 新字段冲掉（2026-11-24 就这么丢过一次模型数据）。
+// 缓存带版本号 v=3，老缓存（v2、30 日口径）直接作废重拉。
 //
 // 服务器那边要先做两件事（不然手机连上也是 403）：
 //   1) Web UI → Settings → Network and sharing → Share on local network
@@ -36,7 +48,10 @@ const CACHE_KEY = 'magpie_usage'
 const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
+const CACHE_VERSION = 3
 const FETCH_TIMEOUT = 8000
+const PERIOD = 'today'
+const WEEK_PERIOD = '7d'
 
 // 自动更新：每天 9–22 点，每小时整点更新一次（和小组件一样的整点时段制）。
 function currentSlot(now: Date): Date {
@@ -83,15 +98,10 @@ interface ModelRow {
   floorMs: number
   floorOut: number
   floorN: number
-  rates: any // { s: {bin: 条数}, f: {bin: 条数} }，没有就是 null
+  rates: any
 }
 
-// 和 widget.tsx 里同一个函数：接口回来是下划线字段，
-// 老缓存里是驼峰；老缓存只有 tokens（input+output 口径）
-// 时就沿用它，等下次拉取再按新口径算。
-// App 和小组件共用同一份缓存，必须写一样的模型结构，
-// 不然 App 刷新一次就会把缓存里的模型列表冲掉（2026-11-24
-// 就这么丢过一次模型数据）。
+// 和 widget.tsx 里同一个函数。
 function normalizeModel(m: any): ModelRow {
   const input = Number(m.input) || 0
   const output = Number(m.output) || 0
@@ -122,7 +132,77 @@ function normalizeModel(m: any): ModelRow {
   }
 }
 
-interface AgentRow {
+interface QuotaWindow {
+  name: string
+  used: number
+  resetsAt: number
+  amount: number
+  limit: number
+  unit: string
+  runsOut: number
+  runsOutAt: number
+  balance: number | null
+  display: string
+  text: boolean
+  unlimited: boolean
+}
+
+function normalizeWindow(w: any): QuotaWindow {
+  const resets = w.resetsAt ? new Date(w.resetsAt).getTime() : 0
+  const runsOut = w.runsOutAt ? new Date(w.runsOutAt).getTime() : 0
+  return {
+    name: String(w.name || ''),
+    used: w.used == null ? -1 : Number(w.used) || 0,
+    resetsAt: isNaN(resets) ? 0 : resets,
+    amount: Number(w.amount) || 0,
+    limit: Number(w.limit) || 0,
+    unit: String(w.unit || ''),
+    runsOut: Number(w.runsOut) || 0,
+    runsOutAt: isNaN(runsOut) ? 0 : runsOut,
+    balance: w.balance == null ? null : Number(w.balance),
+    display: String(w.display || ''),
+    text: !!w.text,
+    unlimited: !!w.unlimited,
+  }
+}
+
+interface BalancePart {
+  label: string
+  text: string
+}
+
+interface QuotaCard {
+  provider: string
+  name: string
+  plan: string
+  user: string
+  windows: QuotaWindow[]
+  balance: string
+  balanceParts: BalancePart[]
+  error: string
+}
+
+function normalizeCard(q: any): QuotaCard {
+  return {
+    provider: String(q.provider || ''),
+    name: String(q.name || q.provider || ''),
+    plan: String(q.plan || ''),
+    user: String(q.user || ''),
+    windows: Array.isArray(q.windows) ? q.windows.map(normalizeWindow) : [],
+    balance: String(q.balance || ''),
+    balanceParts: Array.isArray(q.balanceParts)
+      ? q.balanceParts.map((p: any) => ({
+          label: String(p.label || ''),
+          text: String(p.text || ''),
+        }))
+      : [],
+    error: String(q.error || ''),
+  }
+}
+
+interface AccountRow {
+  provider: string
+  account: string
   name: string
   calls: number
   tokens: number
@@ -130,35 +210,42 @@ interface AgentRow {
 }
 
 interface UsageData {
+  v: number
   period: string
   calls: number
   errors: number
   input: number
   output: number
+  cacheRead: number
+  cacheWrite: number
   cost: number
   tokens: number
-  topModel: ModelRow | null
-  topAgent: AgentRow | null
+  timed: number
+  ttftMs: number
+  decodeMs: number
+  decodeOut: number
+  decodeN: number
+  floorMs: number
+  floorOut: number
+  floorN: number
+  rates: any
   models: ModelRow[]
-  totalTokens: number // 全部模型的 token 之和，算占比的分母
-  agents: AgentRow[]
-  series: number[]
+  totalTokens: number
+  accounts: AccountRow[]
+  weekCalls: number // 近 7 日请求数（period=7d 那次的 Totals.calls）
   sessionCount: number
+  version: string
+  modelCount: number
+  cards: QuotaCard[]
   updatedAt: string
   updatedTs: number
   fromCache: boolean
   error: string
+  cardsError: string
 }
 
 function fetchWithTimeout(url: string, init: any, ms: number): Promise<any> {
   return fetch(url, { ...init, signal: AbortSignal.timeout(ms) })
-}
-
-function periodLabel(p: string): string {
-  if (p === 'week') return '本周'
-  if (p === 'month') return '本月'
-  if (p === 'all') return '全部'
-  return '今日'
 }
 
 function normalizeBase(b: string): string {
@@ -170,8 +257,7 @@ function normalizeBase(b: string): string {
   return s.replace(/\/$/, '')
 }
 
-async function fetchUsage(base: string, key: string, period: string): Promise<UsageData> {
-  const url = normalizeBase(base) + `/v1/magpie/usage?period=${period}`
+async function fetchJson(url: string, key: string): Promise<any> {
   let res: any
   try {
     res = await fetchWithTimeout(
@@ -195,8 +281,75 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
   }
   if (!j) throw new Error('无返回')
   if (j.error) throw new Error(j.error.message || j.error.code || '请求被拒')
+  return j
+}
+
+function emptyData(): UsageData {
+  return {
+    v: CACHE_VERSION,
+    period: PERIOD,
+    calls: 0,
+    errors: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: 0,
+    tokens: 0,
+    timed: 0,
+    ttftMs: 0,
+    decodeMs: 0,
+    decodeOut: 0,
+    decodeN: 0,
+    floorMs: 0,
+    floorOut: 0,
+    floorN: 0,
+    rates: null,
+    models: [],
+    totalTokens: 0,
+    accounts: [],
+    weekCalls: 0,
+    sessionCount: 0,
+    version: '',
+    modelCount: 0,
+    cards: [],
+    updatedAt: '',
+    updatedTs: 0,
+    fromCache: true,
+    error: '',
+    cardsError: '',
+  }
+}
+
+function normalizeCached(c: any): UsageData | null {
+  if (!c || typeof c !== 'object' || typeof c.calls !== 'number') return null
+  if (c.v !== CACHE_VERSION) return null
+  const d = { ...emptyData(), ...c, fromCache: true } as UsageData
+  d.models = (c.models || [])
+    .map((m: any) => normalizeModel(m))
+    .filter((m: ModelRow) => m.name)
+    .sort((a: ModelRow, b: ModelRow) => b.tokens - a.tokens)
+    .slice(0, 4)
+  d.totalTokens = d.models.reduce((s: number, m: ModelRow) => s + m.tokens, 0)
+  d.cards = Array.isArray(c.cards) ? c.cards.map(normalizeCard) : []
+  d.accounts = Array.isArray(c.accounts) ? c.accounts : []
+  d.weekCalls = typeof c.weekCalls === 'number' ? c.weekCalls : 0
+  return d
+}
+
+async function fetchAll(base: string, key: string): Promise<UsageData> {
+  const b = normalizeBase(base)
+  const usageP = fetchJson(b + `/v1/magpie/usage?period=${PERIOD}`, key)
+  const infoP = fetchJson(b + '/v1', key).catch(() => null)
+  const cardsP = fetchJson(b + '/v1/magpie/quotas/cards', key).catch(() => null)
+  const weekP = fetchJson(b + `/v1/magpie/usage?period=${WEEK_PERIOD}`, key).catch(() => null)
+  const usage = await usageP
+  const [info, cards, week] = await Promise.all([infoP, cardsP, weekP])
+  const j = usage
   const input = Number(j.input) || 0
   const output = Number(j.output) || 0
+  const cacheRead = Number(j.cache_read) || 0
+  const cacheWrite = Number(j.cache_write) || 0
   const models: ModelRow[] = Array.isArray(j.models)
     ? j.models
         .map((m: any) => normalizeModel(m))
@@ -204,45 +357,69 @@ async function fetchUsage(base: string, key: string, period: string): Promise<Us
         .sort((a: ModelRow, b: ModelRow) => b.tokens - a.tokens)
     : []
   const totalTokens = models.reduce((s: number, m: ModelRow) => s + m.tokens, 0)
-  const agents: AgentRow[] = Array.isArray(j.agents)
-    ? j.agents
-        .map((a: any) => ({
-          name: String(a.name || a.id || ''),
+  const accounts: AccountRow[] = Array.isArray(j.accounts)
+    ? j.accounts.map((a: any) => {
+        const ai = Number(a.input) || 0
+        const ao = Number(a.output) || 0
+        const acr = Number(a.cache_read) || 0
+        const acw = Number(a.cache_write) || 0
+        return {
+          provider: String(a.provider || ''),
+          account: String(a.account || ''),
+          name: String(a.name || a.account || a.provider || ''),
           calls: Number(a.calls) || 0,
-          tokens: (Number(a.input) || 0) + (Number(a.output) || 0),
+          tokens: ai + ao + acr + acw,
           cost: Number(a.cost) || 0,
-        }))
-        .filter((a: AgentRow) => a.name)
-        .sort((a: AgentRow, b: AgentRow) => b.calls - a.calls)
+        }
+      })
     : []
-  const series: number[] = Array.isArray(j.series)
-    ? j.series.map((p: any) => Number(p.calls) || 0)
-    : []
+  const weekCalls = week ? Number(week.calls) || 0 : 0
   const now = new Date()
+  let version = ''
+  let modelCount = 0
+  if (info) {
+    const v = String(info.version || '')
+    version = v ? (v.startsWith('v') ? v : 'v' + v) : ''
+    modelCount = Number(info.models) || 0
+  }
   return {
-    period,
+    v: CACHE_VERSION,
+    period: PERIOD,
     calls: Number(j.calls) || 0,
     errors: Number(j.errors) || 0,
     input,
     output,
+    cacheRead,
+    cacheWrite,
     cost: Number(j.cost) || 0,
-    tokens: input + output,
-    topModel: models[0] || null,
-    topAgent: agents[0] || null,
-    models: models.slice(0, 3),
+    tokens: input + output + cacheRead + cacheWrite,
+    timed: Number(j.timed) || 0,
+    ttftMs: Number(j.ttft_ms) || 0,
+    decodeMs: Number(j.decode_ms) || 0,
+    decodeOut: Number(j.decode_out) || 0,
+    decodeN: Number(j.decode_n) || 0,
+    floorMs: Number(j.floor_ms) || 0,
+    floorOut: Number(j.floor_out) || 0,
+    floorN: Number(j.floor_n) || 0,
+    rates: j.rates && typeof j.rates === 'object' ? j.rates : null,
+    models: models.slice(0, 4),
     totalTokens,
-    agents: agents.slice(0, 2),
-    series: series.slice(-12),
+    accounts,
+    weekCalls,
     sessionCount: Number(j.sessionCount) || 0,
+    version,
+    modelCount,
+    cards: Array.isArray(cards) ? cards.map(normalizeCard).filter((c: QuotaCard) => c.name) : [],
     updatedAt: fmtTimeShort(now),
     updatedTs: now.getTime(),
     fromCache: false,
     error: '',
+    cardsError: cards ? '' : '额度卡没拉到',
   }
 }
 
-function saveConfig(base: string, key: string, period: string) {
-  const cfg = { base, key, period }
+function saveConfig(base: string, key: string) {
+  const cfg = { base, key }
   try {
     Storage.set(CONFIG_KEY, cfg, { shared: true })
   } catch (e) {}
@@ -253,10 +430,33 @@ function saveConfig(base: string, key: string, period: string) {
   } catch (e) {}
 }
 
+function saveCache(d: UsageData) {
+  try {
+    Storage.set(CACHE_KEY, d, { shared: true })
+  } catch (e) {}
+  try {
+    const dir = FileManager.appGroupDocumentsDirectory + '/' + Script.name
+    FileManager.createDirectory(dir, true)
+    FileManager.writeString(dir + '/' + CACHE_FILE, JSON.stringify(d))
+  } catch (e) {}
+}
+
+// 一张卡的主窗口：和 widget.tsx 里同一个规则。
+function primaryWindow(card: QuotaCard): QuotaWindow | null {
+  const withUsed = card.windows.filter((w) => !w.text && !w.unlimited && w.used >= 0)
+  if (!withUsed.length) return null
+  const withReset = withUsed.filter((w) => w.resetsAt > 0)
+  const pool = withReset.length ? withReset : withUsed
+  let best = pool[0]
+  for (const w of pool) {
+    if (w.resetsAt > best.resetsAt) best = w
+  }
+  return best
+}
+
 function App() {
   const [base, setBase] = useState<string>('')
   const [key, setKey] = useState<string>('')
-  const [period, setPeriod] = useState<string>('today')
   const [loaded, setLoaded] = useState(false)
   const [data, setData] = useState<UsageData | null>(null)
   const [status, setStatus] = useState<string>('打开 App 后自动拉取…')
@@ -264,13 +464,11 @@ function App() {
   useEffect(() => {
     let base0 = ''
     let key0 = ''
-    let period0 = 'today'
     try {
       const cfg: any = Storage.get(CONFIG_KEY, { shared: true })
       if (cfg) {
         base0 = cfg.base || ''
         key0 = cfg.key || ''
-        period0 = cfg.period || 'today'
       }
     } catch (e) {}
     try {
@@ -280,26 +478,24 @@ function App() {
         if (pref) {
           base0 = pref.base || base0
           key0 = pref.key || key0
-          period0 = pref.period || period0
         }
       }
     } catch (e) {}
     setBase(base0)
     setKey(key0)
-    setPeriod(period0)
     setLoaded(true)
     // 注意：setBase/setKey 是异步的，这里直接把读到的值传给 refresh，
     // 不能等 state（否则打开 App 自动拉那次读到的 base 还是空的，
     // 会直接报“还没填服务器地址”）。
-    refresh(true, base0, key0, period0)
+    refresh(true, base0, key0)
   }, [])
 
   useEffect(() => {
     if (!loaded) return
-    saveConfig(base, key, period)
-  }, [base, key, period, loaded])
+    saveConfig(base, key)
+  }, [base, key, loaded])
 
-  async function refresh(auto = false, b = base, k = key, p = period) {
+  async function refresh(auto = false, b = base, k = key) {
     const base0 = b.replace(/\/$/, '')
     if (!base0) {
       setStatus('还没填服务器地址（下面“服务器地址”里填，如 http://192.168.1.20:3425）')
@@ -311,7 +507,7 @@ function App() {
     }
     if (auto) {
       try {
-        const cached: any = Storage.get(CACHE_KEY, { shared: true })
+        const cached = normalizeCached(Storage.get(CACHE_KEY, { shared: true }))
         if (cached && cached.updatedTs && cached.updatedTs >= currentSlot(new Date()).getTime()) {
           setData({ ...cached, fromCache: true })
           setStatus(`已更新：${cached.updatedAt}（缓存），下次 ${fmtTime(nextSlot(new Date()))}`)
@@ -321,16 +517,9 @@ function App() {
     }
     setStatus('正在拉取…')
     try {
-      const fresh = await fetchUsage(base0, k, p)
+      const fresh = await fetchAll(base0, k)
       setData(fresh)
-      try {
-        Storage.set(CACHE_KEY, fresh, { shared: true })
-      } catch (e) {}
-      try {
-        const dir = FileManager.appGroupDocumentsDirectory + '/' + Script.name
-        FileManager.createDirectory(dir, true)
-        FileManager.writeString(dir + '/' + CACHE_FILE, JSON.stringify(fresh))
-      } catch (e) {}
+      saveCache(fresh)
       Widget.reloadAll()
       setStatus(`已更新：${fresh.updatedAt}，下次 ${fmtTime(nextSlot(new Date()))}`)
     } catch (e: any) {
@@ -338,25 +527,15 @@ function App() {
     }
   }
 
-  function periodButton(p: string, label: string) {
-    return (
-      <Button
-        title={label}
-        action={() => {
-          setPeriod(p)
-          refresh(false, base, key, p)
-        }}
-      />
-    )
-  }
+  const success = data && data.calls > 0 ? (100 * (data.calls - data.errors)) / data.calls : 100
 
   return (
     <NavigationStack>
       <List navigationTitle="Magpie">
-        <Section header={<Text>用量</Text>}>
+        <Section header={<Text>用量（今日）</Text>}>
           {data && (
             <HStack>
-              <Text>{periodLabel(data.period)}请求</Text>
+              <Text>请求</Text>
               <Spacer />
               <Text fontWeight="bold">{fmtNum(data.calls)} 次</Text>
             </HStack>
@@ -375,12 +554,19 @@ function App() {
               <Text fontWeight="bold">{fmtCost(data.cost)}</Text>
             </HStack>
           )}
-          {data && data.topModel && (
+          {data && (
+            <HStack>
+              <Text>成功率</Text>
+              <Spacer />
+              <Text fontWeight="bold">{success.toFixed(1)}%</Text>
+            </HStack>
+          )}
+          {data && data.models[0] && (
             <HStack>
               <Text>用的最多</Text>
               <Spacer />
               <Text>
-                {data.topModel.name} · {fmtNum(data.topModel.calls)} 次
+                {data.models[0].name} · {fmtNum(data.models[0].calls)} 次
               </Text>
             </HStack>
           )}
@@ -391,9 +577,59 @@ function App() {
               <Text foregroundStyle="red">{data.errors} 次</Text>
             </HStack>
           )}
+          {data && data.weekCalls > 0 && (
+            <HStack>
+              <Text>近 7 日</Text>
+              <Spacer />
+              <Text>{fmtNum(data.weekCalls)} 次</Text>
+            </HStack>
+          )}
+          {data && data.version ? (
+            <HStack>
+              <Text>版本</Text>
+              <Spacer />
+              <Text>
+                {data.version} · {data.modelCount} 模型
+              </Text>
+            </HStack>
+          ) : null}
           <Text foregroundStyle="secondaryLabel">{status}</Text>
           <Button title="刷新用量" action={() => refresh(false)} />
         </Section>
+        {data && data.cards.length > 0 && (
+          <Section header={<Text>账号额度</Text>}>
+            {data.cards.map((c, i) => {
+              const w = primaryWindow(c)
+              const rem = w ? 100 - w.used * 100 : null
+              const right =
+                w && w.limit > 0
+                  ? `${fmtNum(w.amount)} / ${fmtNum(w.limit)}`
+                  : w && w.resetsAt > 0
+                    ? `${fmtDate(new Date(w.resetsAt))} 重置`
+                    : c.balance
+              return (
+                <VStack key={i} alignment="leading" spacing={2}>
+                  <HStack>
+                    <Text fontWeight="bold">{c.name}</Text>
+                    {c.plan ? <Text foregroundStyle="secondaryLabel"> · {c.plan}</Text> : null}
+                    <Spacer />
+                    <Text>{rem !== null ? `${rem % 1 === 0 ? Math.round(rem) : rem.toFixed(1)}% 剩余` : ''}</Text>
+                  </HStack>
+                  <HStack>
+                    <Text foregroundStyle="secondaryLabel">{right}</Text>
+                    <Spacer />
+                    {c.error ? <Text foregroundStyle="red">{c.error}</Text> : null}
+                  </HStack>
+                </VStack>
+              )
+            })}
+          </Section>
+        )}
+        {data && data.cards.length === 0 && data.cardsError ? (
+          <Section header={<Text>账号额度</Text>}>
+            <Text foregroundStyle="secondaryLabel">{data.cardsError}</Text>
+          </Section>
+        ) : null}
         <Section header={<Text>设置</Text>}>
           <HStack>
             <Text>服务器地址</Text>
@@ -403,16 +639,9 @@ function App() {
             <Text>网关 Key</Text>
             <TextField title="只读 Key 就够" value={key} onChanged={setKey} />
           </HStack>
-          <HStack>
-            <Text>统计周期</Text>
-            <Spacer />
-            {periodButton('today', '今日')}
-            {periodButton('week', '本周')}
-            {periodButton('month', '本月')}
-          </HStack>
           <Text foregroundStyle="secondaryLabel">
             填手机能直接访问的那个地址：在家同一 Wi-Fi 就填局域网 IP + 3425 端口；远程就填
-            WorkBuddy 里用的那个地址 + 3430 端口。两个端口都能拉用量。网关 Key
+            WorkBuddy 里用的那个地址 + 3430 端口。两个端口都能拉用量和额度。网关 Key
             只存在手机本地，不会上传云端，也不要提交到 GitHub。
           </Text>
         </Section>
@@ -421,9 +650,8 @@ function App() {
             服务器那边要先做两件事，不然手机连上也是 403：1）Web UI → Settings → Network and
             sharing → Share on local network 打开；2）建一个只读网关 Key：Web UI → Gateway →
             Gateway keys 里建，或在服务器上 docker exec magpie magpie gateway-key add widget
-            --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。在家同一 Wi-Fi
-            就填局域网 IP + 3425，远程就填 WorkBuddy 那个地址 + 3430，两个端口都能拉用量。小组件每天 9–22
-            点每小时自动更新一次。
+            --read-only。这个 Key 不是 MAGPIE_WEB_KEY（那是进网页用的）。小组件每天 9–22
+            点每小时自动更新一次，统计周期固定 30 日。
           </Text>
         </Section>
         <Section>
