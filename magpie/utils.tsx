@@ -60,3 +60,11 @@ export function fmtCostWeb(c: number): string {
 export function fmtNum(n: number): string {
   return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',')
 }
+
+// 百分比：整数不带小数（100% 而不是 100.0%，
+// 不然小图那格“成功率 100.0%”太宽会折成两行），
+// 其余保留一位小数：93.6%
+export function fmtPct(v: number): string {
+  const r = Math.round(v * 10) / 10
+  return (Number.isInteger(r) ? String(r) : r.toFixed(1)) + '%'
+}

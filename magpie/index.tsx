@@ -15,7 +15,7 @@ import {
   useEffect,
   useState,
 } from 'scripting'
-import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate } from './utils'
+import { fmtTime, fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct } from './utils'
 
 // Magpie 设置页（App 内打开）
 // 填服务器地址和网关 Key，点“刷新用量”手动拉一次。
@@ -558,7 +558,7 @@ function App() {
             <HStack>
               <Text>成功率</Text>
               <Spacer />
-              <Text fontWeight="bold">{success.toFixed(1)}%</Text>
+              <Text fontWeight="bold">{fmtPct(success)}</Text>
             </HStack>
           )}
           {data && data.models[0] && (

@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate } from './utils'
+import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct } from './utils'
 
 // Magpie Scripting 小组件（2026-11-26 新版：截图同款设计）
 // Magpie 是 yetone 的本地 AI 网关（Docker 跑在 john 的 Debian 服务器上，
@@ -834,7 +834,7 @@ function StatsRow({ data, pad = 16, valueFont = 20 }: { data: UsageData; pad?: n
       <StatCell label="今日调用" value={fmtNum(data.calls)} color="rgba(17,17,17,1)" w={cellW} valueFont={valueFont} />
       <StatCell
         label="成功率"
-        value={success.toFixed(1) + '%'}
+        value={fmtPct(success)}
         color={success >= 100 ? 'rgba(16,185,129,1)' : 'rgba(245,158,11,1)'}
         w={cellW}
         valueFont={valueFont}
@@ -1006,8 +1006,8 @@ function CompactView({ data }: { data: UsageData }) {
           <HStack alignment="center" spacing={0}>
             <SmallStat label="调用" value={fmtNum(data.calls)} color="rgba(17,17,17,1)" w={cellW} />
             <SmallStat
-              label="成功率"
-              value={success.toFixed(1) + '%'}
+              label="成功"
+              value={fmtPct(success)}
               color={success >= 100 ? 'rgba(16,185,129,1)' : 'rgba(245,158,11,1)'}
               w={cellW}
             />
