@@ -68,3 +68,15 @@ export function fmtPct(v: number): string {
   const r = Math.round(v * 10) / 10
   return (Number.isInteger(r) ? String(r) : r.toFixed(1)) + '%'
 }
+
+// 额度卡接口回的是 {"object": "list", "data": [...]}，不是裸数组
+// （writeCards，internal/gateway/quotas_scope.go）。
+// 不拆 data 这一层，Array.isArray 就过不了，卡永远是空的；
+// 而且回来的对象是 truthy，连“额度卡没拉到”都不显示，
+// 大图就静悄悄一张卡都没有（2026-11-26 大图截图就是这样）。
+// 用量和 /v1 接口回的是裸对象，不用拆，只有额度卡要拆。
+export function unwrapCards(raw: any): any[] {
+  if (Array.isArray(raw)) return raw
+  if (raw && Array.isArray(raw.data)) return raw.data
+  return []
+}

@@ -9,7 +9,7 @@ import {
   fetch,
   modifiers,
 } from 'scripting'
-import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct } from './utils'
+import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct, unwrapCards } from './utils'
 
 // Magpie Scripting 小组件（2026-11-26 新版：截图同款设计）
 // Magpie 是 yetone 的本地 AI 网关（Docker 跑在 john 的 Debian 服务器上，
@@ -55,7 +55,11 @@ import { fmtTimeShort, fmtTokens, fmtCost, fmtNum, fmtDate, fmtPct } from './uti
 //     Week="7d"、Month="30d"，传 period=month 会被当成未知值
 //     静默回落到 30d（internal/usageapi/usageapi.go 的 PeriodOf）。
 //   GET {base}/v1/magpie/quotas/cards
-//     -> []SubscriptionQuota（internal/provider/subscription_usage.go），
+//     -> {"object": "list", "data": []SubscriptionQuota}，
+//     注意回的是包了一层 data 的对象，不是裸数组
+//     （writeCards，internal/gateway/quotas_scope.go）——
+//     必须先拆 data 再当数组用，2026-11-26 之前没拆，
+//     大图一张卡都出不来，还因为对象 truthy 连报错都不显示。
 //     一张卡一个账号：name、plan、windows[]、balance、balanceParts[]。
 //     卡的画法是按网页 Usage 页额度卡（internal/gui/assets/app.js
 //     renderQuotas / quotaWindows / quotaText / quotaCount /
@@ -86,7 +90,7 @@ const CACHE_KEY = 'magpie_usage'
 const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
-const CACHE_VERSION = 3
+const CACHE_VERSION = 4
 const FETCH_TIMEOUT = 8000
 // 统计口径：当天（period=today，Magpie 里 Today="today"，
 // 从今天 0 点算起，series 按小时）。注意 Magpie 的周期值不是
@@ -570,7 +574,7 @@ async function loadData(): Promise<{ data: UsageData; cfg: Config }> {
     sessionCount: Number(j.sessionCount) || 0,
     version,
     modelCount,
-    cards: Array.isArray(cards) ? cards.map(normalizeCard).filter((c: QuotaCard) => c.name) : [],
+    cards: unwrapCards(cards).map(normalizeCard).filter((c: QuotaCard) => c.name),
     updatedAt: fmtTimeShort(now),
     updatedTs: now.getTime(),
     fromCache: false,
