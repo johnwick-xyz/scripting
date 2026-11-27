@@ -90,7 +90,7 @@ const CACHE_KEY = 'magpie_usage'
 const CONFIG_KEY = 'magpie_config'
 const CACHE_FILE = 'cache.json'
 const CONFIG_FILE = 'preference.json'
-const CACHE_VERSION = 5
+const CACHE_VERSION = 6
 const FETCH_TIMEOUT = 8000
 // 统计口径：当天（period=today，Magpie 里 Today="today"，
 // 从今天 0 点算起，series 按小时）。注意 Magpie 的周期值不是
@@ -200,9 +200,18 @@ interface QuotaWindow {
 function normalizeWindow(w: any): QuotaWindow {
   const resets = w.resetsAt ? new Date(w.resetsAt).getTime() : 0
   const runsOut = w.runsOutAt ? new Date(w.runsOutAt).getTime() : 0
+  // used 正常是 0–1 的小数，但有的卡（Codex）返回的是百分比（36），
+  // 直接当小数算会变成 100 - 3600 = 负数，条被压到 0%。
+  // 大于 1 就当成百分比除以 100，再夹到 0–1。
+  let used = -1
+  if (w.used != null) {
+    let u = Number(w.used) || 0
+    if (u > 1) u = u / 100
+    used = Math.max(0, Math.min(1, u))
+  }
   return {
     name: String(w.name || ''),
-    used: w.used == null ? -1 : Number(w.used) || 0,
+    used,
     resetsAt: isNaN(resets) ? 0 : resets,
     amount: Number(w.amount) || 0,
     limit: Number(w.limit) || 0,
