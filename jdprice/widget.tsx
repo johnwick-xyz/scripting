@@ -16,8 +16,8 @@ import { rpt, parseSlots, DEFAULT_SLOTS } from './utils'
 // 取价分两路：
 // 1) 小组件自己拉价——每个源都用 Promise.race + setTimeout 超时
 //    （AbortSignal.timeout 在 Scripting 里断不开 fetch），
-//    几个源并行跑，谁先拿到价就用谁，别一个一个等，
-//    不然小组件在后台没多少时间，全跑完就被系统掐了。
+//    只走 wareBusiness 一个源（api.m.jd.com），跟京豆一样，
+//    后台 setTimeout 不准，多源一 hang 就被掐，连报错都留不下。
 //    失败了就直接显示缓存价，绝不转圈。
 // 2) App 里拉价（打开 App 时，到更新点就拉一次），
 //    拉到就写进 Storage 共享域 + 本地文件，小组件读缓存。
@@ -268,114 +268,27 @@ async function fetchWareBusinessPrice(sku: string, cookie: string): Promise<numb
   return extractWarePrice(j)
 }
 
-// 并行取价：几个源同时跑，谁先拿到价就用谁。
-// 小组件在后台时间有限（手动刷新在 App 里没这个限制，所以 App 能成、
-// 小组件到点失败），一个一个等很容易被系统掐掉。
-// dbg 记下每个源的结果，万一都失败，报错里能看到是哪一步出的错。
+// 小组件只走京东 App 自己的接口（wareBusiness，api.m.jd.com），
+// 一个源、一次请求，跟京豆那个小组件一样。
+// 之前 4 个源并行/顺序都试过，到点还是不更新、底行连“更新失败”
+// 都没有，说明小组件在后台被掐掉了，不是取价慢、是根本没跑完。
+// 原因：后台里 setTimeout 不准，Promise.race 的超时未必能触发，
+// 只要有一个源（p.3.cn、商品页）hang 住，小组件就卡死、
+// 被系统杀掉，连 catch 都跑不到，所以底行一直停在上次手动刷新的时间。
+// api.m.jd.com 是京豆验证过、后台能通的唯一一家，只留它。
+// p.3.cn、商品页这些备用源只留在 App（index.tsx）里手动刷时用，
+// 前台不怕 hang。
+// dbg 记下结果，万一 wareBusiness 也没价，报错里能看到。
 async function fetchPrice(sku: string, cookie: string): Promise<number> {
-  const headers: any = {
-    'User-Agent':
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
-    Referer: `https://item.jd.com/${sku}.html`,
-  }
-  if (cookie) headers.Cookie = cookie
   const dbg: string[] = []
-
-  // 每个源包成一个 promise：有价返回 { name, price }，没价/出错返回 { name, price: null }，
-  // 出错自己吞掉，只记到 dbg，绝不让一个源的异常拖垮整次取价。
-  const jobs: Array<Promise<{ name: string; price: number | null }>> = [
-    (async () => {
-      try {
-        return { name: 'wareBusiness', price: await fetchWareBusinessPrice(sku, cookie) }
-      } catch (e) {
-        dbg.push('wareBusiness ' + String((e as any)?.message || e).slice(0, 20))
-        return { name: 'wareBusiness', price: null }
-      }
-    })(),
-    (async () => {
-      try {
-        const res: any = await fetchWithTimeout(
-          `https://p.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
-          { method: 'GET', headers },
-          8000,
-        )
-        const list = await res.json()
-        const arr = Array.isArray(list) ? list : []
-        for (const item of arr) {
-          if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
-            const p = parseFloat(item.p)
-            if (!isNaN(p) && p > 0) return { name: 'p3', price: p }
-          }
-        }
-        return { name: 'p3', price: null }
-      } catch (e) {
-        dbg.push('p3 ' + String((e as any)?.message || e).slice(0, 20))
-        return { name: 'p3', price: null }
-      }
-    })(),
-    (async () => {
-      try {
-        const res: any = await fetchWithTimeout(
-          `https://pm.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
-          { method: 'GET', headers },
-          8000,
-        )
-        const list = await res.json()
-        const arr = Array.isArray(list) ? list : []
-        for (const item of arr) {
-          if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
-            const p = parseFloat(item.p)
-            if (!isNaN(p) && p > 0) return { name: 'pm', price: p }
-          }
-        }
-        return { name: 'pm', price: null }
-      } catch (e) {
-        dbg.push('pm ' + String((e as any)?.message || e).slice(0, 20))
-        return { name: 'pm', price: null }
-      }
-    })(),
-    (async () => {
-      // 备用：带 Cookie 拉商品页，页里 "jdPrice":"459.00" 就是真价；
-      // 没登录时这里是 "4??"，带问号的不要。
-      try {
-        const res = await fetchWithTimeout(
-          `https://item.m.jd.com/product/${sku}.html`,
-          { method: 'GET', headers },
-          10000,
-        )
-        const text: string = await res.text()
-        const m =
-          typeof text === 'string' ? text.match(/"jdPrice":"([0-9]+(?:\.[0-9]+)?)"/) : null
-        if (m) {
-          const p = parseFloat(m[1])
-          if (!isNaN(p) && p > 0) return { name: '商品页', price: p }
-        }
-        return { name: '商品页', price: null }
-      } catch (e) {
-        dbg.push('商品页 ' + String((e as any)?.message || e).slice(0, 20))
-        return { name: '商品页', price: null }
-      }
-    })(),
-  ]
-
-  // 谁先拿到价就返回；全部跑完都没价才报错。
-  // （先 resolve 的胜出，后面的 reject 会被忽略，不会覆盖。）
-  return new Promise<number>((resolve, reject) => {
-    let done = 0
-    jobs.forEach((job) => {
-      job.then((r) => {
-        if (r.price != null) {
-          resolve(r.price)
-        } else {
-          dbg.push(r.name + ' 无价')
-        }
-        done++
-        if (done === jobs.length) {
-          reject(new Error('取价接口没返回价格（' + dbg.join('；') + '）'))
-        }
-      })
-    })
-  })
+  try {
+    const p = await fetchWareBusinessPrice(sku, cookie)
+    if (p != null) return p
+    dbg.push('wareBusiness 无价')
+  } catch (e) {
+    dbg.push('wareBusiness ' + String((e as any)?.message || e).slice(0, 20))
+  }
+  throw new Error('取价接口没返回价格（' + dbg.join('；') + '）')
 }
 
 // ---- 读 / 写缓存 ----
