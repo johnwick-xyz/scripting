@@ -36,7 +36,14 @@ Object.keys(srcHeaders).forEach((k) => {
   headers[k] = srcHeaders[k];
 });
 const latestCookie = $persistentStore.read(COOKIE_KEY);
-if (latestCookie) headers['Cookie'] = latestCookie;
+if (latestCookie) {
+  // 先删掉抓到的请求里已有的 Cookie（不管大小写），再写最新的，
+  // 不然同时存在 'Cookie' 和 'cookie' 两个头，服务器可能认旧的。
+  Object.keys(headers).forEach((k) => {
+    if (k.toLowerCase() === 'cookie') delete headers[k];
+  });
+  headers['Cookie'] = latestCookie;
+}
 const token = $persistentStore.read(TOKEN_KEY);
 if (token && !headers['Authorization'] && !headers['authorization']) headers['Authorization'] = token;
 

@@ -38,8 +38,12 @@ const token =
   headers['accessToken'] || headers['access-token'] || '';
 if (token) save(TOKEN_KEY, token, '奈雪 Token 已抓取', '每日签到能用了', false);
 
-// 3. 签到请求：URL 含 sign / checkin / check-in
-if (/sign|check[-_]?in/i.test(url)) {
+// 3. 签到请求：URL 里「/sign…」或「/checkin…」这种路径段才算，
+// 不能只含 sign 子串——不然 /design、/assign 这类接口也会误抓，
+// 把签到请求覆盖掉就重放错了。
+// 注意 /signal、/signature 不是签到（sign 后面跟了小写字母 al…），
+// /signin、/signIn 才是（sign 后面是 in 或大写字母）。
+if (/\/(?:[Ss]ign(?:(?![a-z])|[Ii]n)|[Cc]heck[-_]?[Ii]n)/.test(url)) {
   const req = { url: url, method: method, headers: headers, body: $request.body || '' };
   const raw = JSON.stringify(req);
   if (method === 'POST') {
