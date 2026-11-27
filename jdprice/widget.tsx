@@ -679,9 +679,11 @@ function ErrorView({ message }: { message: string }) {
       }
       saveCache(data)
       Widget.present(<WidgetView data={data} />, {
-        policy: 'after',
-        date: nextSlot(new Date(), slots),
-      } as any)
+        reloadPolicy: {
+          policy: 'after',
+          date: nextSlot(new Date(), slots),
+        },
+      })
       return
     } catch (e) {
       // 拉失败了就显示旧缓存，不报错、不转圈，
@@ -699,9 +701,11 @@ function ErrorView({ message }: { message: string }) {
   if (cached && cached.price != null) {
     cached.fromCache = true
     Widget.present(<WidgetView data={cached} />, {
-      policy: 'after',
-      date: nextSlot(new Date(), slots),
-    } as any)
+      reloadPolicy: {
+        policy: 'after',
+        date: nextSlot(new Date(), slots),
+      },
+    })
     return
   }
   // 完全没有缓存（第一次用）：直接拉一次，拉不到就提示打开 App
@@ -731,9 +735,11 @@ function ErrorView({ message }: { message: string }) {
     }
     saveCache(data)
     Widget.present(<WidgetView data={data} />, {
-      policy: 'after',
-      date: nextSlot(new Date(), slots),
-    } as any)
+      reloadPolicy: {
+        policy: 'after',
+        date: nextSlot(new Date(), slots),
+      },
+    })
     return
   } catch (e) {}
   Widget.present(
