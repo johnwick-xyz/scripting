@@ -179,20 +179,16 @@ function extractWarePrice(j: any): number | null {
 async function fetchWareBusinessPrice(sku: string, cookie: string): Promise<number | null> {
   const apiHeaders: any = {
     Host: 'api.m.jd.com',
-    'Content-Type': 'application/x-www-form-urlencoded',
     'User-Agent':
       'jdapp;iPhone;9.4.4;14.3;network/4g;Mozilla/5.0 (iPhone; CPU iPhone OS 14_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148;supportJDSHWK/1',
   }
   if (cookie) apiHeaders.Cookie = cookie
-  const j: any = await fetchJsonWithTimeout(
-    'https://api.m.jd.com/client.action?functionId=wareBusiness',
-    {
-      method: 'POST',
-      headers: apiHeaders,
-      body: `body=${encodeURIComponent(JSON.stringify({ skuId: sku }))}&appid=productDetail`,
-    },
-    8000,
-  )
+  // 按文档用 GET，body 放查询串（之前 POST 放 body 里可能不认）：
+  //   GET https://api.m.jd.com/client.action?functionId=wareBusiness&appid=productDetail&body={"skuId":"..."}
+  const url =
+    'https://api.m.jd.com/client.action?functionId=wareBusiness&appid=productDetail&body=' +
+    encodeURIComponent(JSON.stringify({ skuId: sku }))
+  const j: any = await fetchJsonWithTimeout(url, { method: 'GET', headers: apiHeaders }, 8000)
   return extractWarePrice(j)
 }
 
@@ -204,24 +200,36 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
   }
   if (cookie) headers.Cookie = cookie
   // 先走京东 App 自己的接口 api.m.jd.com（京豆就是走这边的，能通）：
-  //   POST https://api.m.jd.com/client.action?functionId=wareBusiness
-  //   body: body=<URL编码的 {"skuId":"..."}>&appid=productDetail
+  //   GET https://api.m.jd.com/client.action?functionId=wareBusiness&appid=productDetail&body={"skuId":"..."}
   // p.3.cn 在小组件后台拉不到价，所以放前面；不行再走 p.3.cn。
+  // dbg 记下每个源的结果，万一都失败，报错里能看到是哪一步出的错。
+  const dbg: string[] = []
   try {
     const p = await fetchWareBusinessPrice(sku, cookie)
     if (p != null) return p
-  } catch (e) {}
+    dbg.push('wareBusiness 无价')
+  } catch (e) {
+    dbg.push('wareBusiness ' + String((e as any)?.message || e).slice(0, 20))
+  }
   for (const url of PRICE_URLS(sku)) {
     try {
       const res: any = await fetchJsonWithTimeout(url, { method: 'GET', headers })
       const list = Array.isArray(res) ? res : []
+      let found = false
       for (const item of list) {
         if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
           const p = parseFloat(item.p)
           if (!isNaN(p) && p > 0) return p
         }
       }
-    } catch (e) {}
+      if (!found)
+        dbg.push(url.indexOf('pm.3.cn') >= 0 ? 'pm 无价' : 'p3 无价')
+    } catch (e) {
+      dbg.push(
+        (url.indexOf('pm.3.cn') >= 0 ? 'pm ' : 'p3 ') +
+          String((e as any)?.message || e).slice(0, 20),
+      )
+    }
   }
   // 备用：带 Cookie 拉商品页，页里 "jdPrice":"459.00" 就是真价；
   // 没登录时这里是 "4??"，带问号的不要。
@@ -240,9 +248,14 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
       const p = parseFloat(m[1])
       if (!isNaN(p) && p > 0) return p
     }
-  } catch (e) {}
+    dbg.push('商品页无价')
+  } catch (e) {
+    dbg.push('商品页 ' + String((e as any)?.message || e).slice(0, 20))
+  }
   throw new Error(
-    '取价接口没返回价格，可能是网络或接口被拦了' +
+    '取价接口没返回价格，可能是网络或接口被拦了（' +
+      dbg.join('；') +
+      '）' +
       (cookie ? '' : '。这个商品要登录才能看价，先填京东 Cookie 再试'),
   )
 }
