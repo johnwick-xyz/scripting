@@ -708,6 +708,22 @@ function ErrorView({ message }: { message: string }) {
     cached.price == null ||
     (isUpdateWindow(now, slots) &&
       (!cached.updatedTs || cached.updatedTs < currentSlot(now, slots).getTime()))
+  // 先立刻显示缓存，保证小组件绝不空白。
+  // 到点自动跑时如果拉价 hang 住（后台 setTimeout 不准、
+  // AbortSignal 断不开 fetch），后面的 present 跑不到，
+  // 小组件就直接不显示。先 present 一次缓存顶上，
+  // 拉到了再 present 一次新价，拉不到也已经有内容了。
+  if (cached && cached.price != null) {
+    cached.fromCache = true
+    Widget.present(<WidgetView data={cached} />, {
+      reloadPolicy: {
+        policy: 'after',
+        date: nextSlot(new Date(), slots),
+      },
+    })
+    // 缓存还新鲜就不用再拉了，直接返回
+    if (!needFetch) return
+  }
   if (needFetch && cached) {
     // 有缓存时先拉，拉不到就用缓存顶上
     try {
@@ -810,4 +826,27 @@ function ErrorView({ message }: { message: string }) {
   Widget.present(
     <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。" />,
   )
-})()
+})().catch(() => {
+  // 兜底：入口任何地方抛错都不能让小组件空白。
+  // 到点自动跑的那次最容易在外面抛错（前面只包了拉价那一段），
+  // 一旦 Widget.present 没跑到，小组件就直接不显示。
+  // 这里尽量显示缓存，实在没有就显示提示。
+  try {
+    const cached = readCached()
+    if (cached && cached.price != null) {
+      cached.fromCache = true
+      Widget.present(<WidgetView data={cached} />, {
+        reloadPolicy: {
+          policy: 'after',
+          date: nextSlot(new Date(), getSlots()),
+        },
+      })
+      return
+    }
+  } catch (e2) {}
+  try {
+    Widget.present(
+      <ErrorView message="还没价格。打开一次 App，它会自动拉新价并刷新小组件。" />,
+    )
+  } catch (e3) {}
+})
