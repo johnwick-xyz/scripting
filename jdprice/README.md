@@ -40,4 +40,3 @@ iOS 决定刷新频率，一般 15-30 分钟一次，不是秒级实时。
 
 Scripting 里“导入远程脚本”，填这个文件夹的 GitHub 地址，例如：
 
-`https://github.com/johnwick-xyz/scripting/tree/main/jdprice`
