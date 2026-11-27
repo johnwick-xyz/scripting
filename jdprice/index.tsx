@@ -140,6 +140,62 @@ async function getBoxJsCookie(url: string): Promise<string> {
   return ''
 }
 
+// App 接口返回里价格位置不固定（data.price.p / price.p / jdPrice 等），
+// 挨个试，拿到大于 0 的数就返回；再扫一遍全文找 "jdPrice" 或 "price":{"p":…}。
+function extractWarePrice(j: any): number | null {
+  const candidates: any[] = [
+    j?.data?.price?.p,
+    j?.wareBusiness?.price?.p,
+    j?.price?.p,
+    j?.data?.price,
+    j?.wareBusiness?.price,
+    j?.price,
+    j?.data?.jdPrice,
+    j?.wareBusiness?.jdPrice,
+    j?.jdPrice,
+    j?.data?.warePrice,
+    j?.warePrice,
+  ]
+  for (const v of candidates) {
+    const p = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
+    if (!isNaN(p) && p > 0) return p
+  }
+  try {
+    const s = JSON.stringify(j)
+    let m = s.match(/"jdPrice"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    if (m) {
+      const p = parseFloat(m[1])
+      if (!isNaN(p) && p > 0) return p
+    }
+    m = s.match(/"price"\s*:\s*\{\s*"p"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    if (m) {
+      const p = parseFloat(m[1])
+      if (!isNaN(p) && p > 0) return p
+    }
+  } catch (e) {}
+  return null
+}
+
+async function fetchWareBusinessPrice(sku: string, cookie: string): Promise<number | null> {
+  const apiHeaders: any = {
+    Host: 'api.m.jd.com',
+    'Content-Type': 'application/x-www-form-urlencoded',
+    'User-Agent':
+      'jdapp;iPhone;9.4.4;14.3;network/4g;Mozilla/5.0 (iPhone; CPU iPhone OS 14_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148;supportJDSHWK/1',
+  }
+  if (cookie) apiHeaders.Cookie = cookie
+  const j: any = await fetchJsonWithTimeout(
+    'https://api.m.jd.com/client.action?functionId=wareBusiness',
+    {
+      method: 'POST',
+      headers: apiHeaders,
+      body: `body=${encodeURIComponent(JSON.stringify({ skuId: sku }))}&appid=productDetail`,
+    },
+    8000,
+  )
+  return extractWarePrice(j)
+}
+
 async function fetchPrice(sku: string, cookie: string): Promise<number> {
   const headers: any = {
     'User-Agent':
@@ -147,6 +203,14 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
     Referer: `https://item.jd.com/${sku}.html`,
   }
   if (cookie) headers.Cookie = cookie
+  // 先走京东 App 自己的接口 api.m.jd.com（京豆就是走这边的，能通）：
+  //   POST https://api.m.jd.com/client.action?functionId=wareBusiness
+  //   body: body=<URL编码的 {"skuId":"..."}>&appid=productDetail
+  // p.3.cn 在小组件后台拉不到价，所以放前面；不行再走 p.3.cn。
+  try {
+    const p = await fetchWareBusinessPrice(sku, cookie)
+    if (p != null) return p
+  } catch (e) {}
   for (const url of PRICE_URLS(sku)) {
     try {
       const res: any = await fetchJsonWithTimeout(url, { method: 'GET', headers })
