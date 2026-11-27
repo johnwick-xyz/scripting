@@ -1,0 +1,10 @@
+#!name=奈雪签到
+#!desc=抓取奈雪点单小程序的登录凭证与签到请求，每天 9:00 自动签到
+#!author=MJ
+
+[MITM]
+hostname = tm-web.pin-dao.cn, *.pin-dao.cn
+
+[Script]
+http-request ^https://[^/]*\.pin-dao\.cn/ tag=奈雪凭证抓取, script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/naixue/NaixueGetAuth.js, requires-body=true
+cron "0 9 * * *" script-path=https://raw.githubusercontent.com/johnwick-xyz/scripting/main/naixue/NaixueSign.js, tag=奈雪每日签到
