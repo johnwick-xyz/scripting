@@ -17,7 +17,7 @@ Sliverkiss 原脚本是混淆的，这里不用它的代码，只按它的思路
 
 1. 把这 3 个文件传到 GitHub 的 `scripting` 仓库，新建文件夹 `naixue/`。
 2. 在 Loon 里安装插件（从链接安装）：
-   `https://raw.githubusercontent.com/johnwick-xyz/scripting/main/naixue/Naixue.lpx`
+   ``
 3. 确认 Loon 的 MITM 证书已信任（小程序是微信里的 HTTPS 流量，没证书抓不到）。
 
 ## 抓一次（必须）
