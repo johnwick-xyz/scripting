@@ -33,9 +33,10 @@ import { rpt, parseSlots, DEFAULT_SLOTS } from './utils'
 // Cookie 和京东价格那个小组件共用同一个（Storage 'jd_cookie'、
 // preference.json、BoxJs jd_cookie / @JD.cookie），
 // 不用再抓一次，也不用再填一次。
-// 取价和京东价格小组件一样：小组件自己拉，用系统原生超时
-// AbortSignal.timeout()，不用 setTimeout（在小组件里靠不住，
-// 之前就是它让预览一直打圈圈）；拉不到就显示缓存价，绝不转圈。
+// 取数和京东价格小组件一样：小组件自己拉。注意 2026-11-26 价格那边
+// 证实了 AbortSignal.timeout() 未必能断开 Scripting 的 fetch，光靠它
+// 请求一 hang 预览就一直转圈，所以下面又加了一层 withTimeout 做硬超时；
+// 拉不到就显示缓存价，绝不转圈。
 
 interface DayBean {
   date: string // YYYY-MM-DD
@@ -150,6 +151,22 @@ function dayOf(data: BeanData, dateStr: string): DayBean | null {
 
 async function fetchWithTimeout(url: string, options: any, ms: number): Promise<any> {
   return fetch(url, { ...options, signal: AbortSignal.timeout(ms) })
+}
+
+// 超时兜底：AbortSignal.timeout 未必能断开 Scripting 的 fetch，
+// 光靠它，取数一 hang 预览就一直转圈（价格小组件 2026-11-26 就是这么转圈的）。
+// 再加一层 Promise.race，超时就直接 reject，
+// 外面 catch 住就显示缓存价，绝不转圈。
+// setTimeout 在小组件里不一定准，但有它比没有强；
+// 它不存在就退回原 promise（只靠 AbortSignal）。
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  if (typeof setTimeout !== 'function') return p
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      setTimeout(() => reject(new Error('超时')), ms)
+    }),
+  ])
 }
 
 async function getCookie(): Promise<string> {
@@ -700,24 +717,33 @@ function ErrorView({ message }: { message: string }) {
   // 就是这么错过的，这里是同一个问题，一起改掉）。
   if (needFetch) {
     try {
-      const cookie = await getCookie()
-      if (!cookie) throw new Error('还没拿到 Cookie')
-      const data = await fetchBean(cookie)
+      const data = await withTimeout(
+        (async () => {
+          const cookie = await getCookie()
+          if (!cookie) throw new Error('还没拿到 Cookie')
+          return fetchBean(cookie)
+        })(),
+        20000,
+      )
       if (cached && cached.avatarPath) data.avatarPath = cached.avatarPath
       saveCache(data)
       Widget.present(<WidgetView data={data} />, {
-        policy: 'after',
-        date: nextSlot(new Date(), slots),
-      } as any)
+        reloadPolicy: {
+          policy: 'after',
+          date: nextSlot(new Date(), slots),
+        },
+      })
       return
     } catch (e) {
       // 拉失败了就显示旧缓存，不报错、不转圈
       if (cached && cached.total != null) {
         cached.fromCache = true
         Widget.present(<WidgetView data={cached} />, {
-          policy: 'after',
-          date: nextSlot(new Date(), slots),
-        } as any)
+          reloadPolicy: {
+            policy: 'after',
+            date: nextSlot(new Date(), slots),
+          },
+        })
         return
       }
       Widget.present(
@@ -729,9 +755,11 @@ function ErrorView({ message }: { message: string }) {
   if (cached && cached.total != null) {
     cached.fromCache = true
     Widget.present(<WidgetView data={cached} />, {
-      policy: 'after',
-      date: nextSlot(new Date(), slots),
-    } as any)
+      reloadPolicy: {
+        policy: 'after',
+        date: nextSlot(new Date(), slots),
+      },
+    })
     return
   }
   Widget.present(
