@@ -1,7 +1,1 @@
-{
-  "color": "rgba(225,37,27,1)",
-  "icon": "tag.fill",
-  "name": "京东价格监控",
-  "runInApp": true,
-  "version": "1.1.0"
-}
+{"color":"rgba(225,37,27,1)","icon":"tag.fill","name":"京东价格监控","runInApp":true,"version":"1.0.0"}
