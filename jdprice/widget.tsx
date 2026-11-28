@@ -57,15 +57,25 @@ const DEFAULT_IMAGE_URL =
 // 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
 // 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
 // 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
+// 取数比整点晚 2 分钟：手动刷也要很久才拿到价，
+// 整点那一下可能正赶上忙、取数慢，小组件在后台等不起，
+// 往后挪 2 分钟再取，错开整点。
+// 注意：只改“下次跑的时间”（nextSlot），
+// currentSlot（判断该不该取）还是按整点算，不动。
+const SLOT_DELAY_MINUTES = 2
 function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
-    if (d.getTime() > now.getTime()) return d
+    if (d.getTime() > now.getTime()) {
+      d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
+      return d
+    }
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
   d.setHours(slots[0], 0, 0, 0)
+  d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
   return d
 }
 
