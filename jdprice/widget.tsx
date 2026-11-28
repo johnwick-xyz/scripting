@@ -16,8 +16,10 @@ import { rpt, parseSlots, DEFAULT_SLOTS } from './utils'
 // 取价分两路：
 // 1) 小组件自己拉价——每个源都用 Promise.race + setTimeout 超时
 //    （AbortSignal.timeout 在 Scripting 里断不开 fetch），
-//    只走 wareBusiness 一个源（api.m.jd.com），跟京豆一样，
-//    后台 setTimeout 不准，多源一 hang 就被掐，连报错都留不下。
+//    先走轻量的 p.3.cn（带 Cookie，5 秒），再走 wareBusiness
+//    （api.m.jd.com，8 秒）。之前只走 wareBusiness 一个源，
+//    它带 Cookie 时回得慢，后台里 setTimeout 又不准，
+//    超时没触发就被系统掐掉，连报错都留不下。
 //    失败了就直接显示缓存价，绝不转圈。
 // 2) App 里拉价（打开 App 时，到更新点就拉一次），
 //    拉到就写进 Storage 共享域 + 本地文件，小组件读缓存。
@@ -57,25 +59,33 @@ const DEFAULT_IMAGE_URL =
 // 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
 // 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
 // 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
-// 取数比整点晚 2 分钟：手动刷也要很久才拿到价，
-// 整点那一下可能正赶上忙、取数慢，小组件在后台等不起，
-// 往后挪 2 分钟再取，错开整点。
-// 注意：只改“下次跑的时间”（nextSlot），
-// currentSlot（判断该不该取）还是按整点算，不动。
-const SLOT_DELAY_MINUTES = 2
+// 两步分开：
+//   整点（9:00、15:00…）拉价——小组件在整点跑一次，
+//   去京东拉新价存进共享缓存；
+//   整点 + 5 分钟（9:05、15:05…）取数——小组件再跑一次，
+//   只读共享缓存显示，不再拉价。
+// 拉价那一下慢（手动刷也要等很久），分开后 5 分钟那次
+// 读缓存一定快，不会被后台掐掉。
+// currentSlot（判断该不该取）按整点算，不动。
+const DISPLAY_DELAY_MINUTES = 5
 function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
     if (d.getTime() > now.getTime()) {
-      d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
       return d
     }
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
   d.setHours(slots[0], 0, 0, 0)
-  d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
+  return d
+}
+
+// 这个整点对应的取数时间（整点 + 5 分钟）。
+function displayTime(slot: Date): Date {
+  const d = new Date(slot)
+  d.setMinutes(d.getMinutes() + DISPLAY_DELAY_MINUTES)
   return d
 }
 
@@ -225,6 +235,20 @@ async function getSku(): Promise<string> {
   return '100244780555'
 }
 
+// 严格取数：只认纯数字（"479"、"479.00"），
+// "4??" 这种被遮住的价格必须拒掉——parseFloat("4??") 会返回 4，
+// 小组件就显示 ¥4.00。Number("4??") 是 NaN，但这里用正则更稳。
+function strictNum(v: any): number | null {
+  if (typeof v === 'number') return v > 0 ? v : null
+  if (typeof v === 'string') {
+    const s = v.trim()
+    if (!/^\d+(\.\d+)?$/.test(s)) return null
+    const p = parseFloat(s)
+    return !isNaN(p) && p > 0 ? p : null
+  }
+  return null
+}
+
 // App 接口返回里价格位置不固定（data.price.p / price.p / jdPrice 等），
 // 挨个试，拿到大于 0 的数就返回；再扫一遍全文找 "jdPrice" 或 "price":{"p":…}。
 function extractWarePrice(j: any): number | null {
@@ -242,20 +266,20 @@ function extractWarePrice(j: any): number | null {
     j?.warePrice,
   ]
   for (const v of candidates) {
-    const p = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
-    if (!isNaN(p) && p > 0) return p
+    const p = strictNum(v)
+    if (p != null) return p
   }
   try {
     const s = JSON.stringify(j)
-    let m = s.match(/"jdPrice"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    let m = s.match(/"jdPrice"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"/)
     if (m) {
-      const p = parseFloat(m[1])
-      if (!isNaN(p) && p > 0) return p
+      const p = strictNum(m[1])
+      if (p != null) return p
     }
-    m = s.match(/"price"\s*:\s*\{\s*"p"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    m = s.match(/"price"\s*:\s*\{\s*"p"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"/)
     if (m) {
-      const p = parseFloat(m[1])
-      if (!isNaN(p) && p > 0) return p
+      const p = strictNum(m[1])
+      if (p != null) return p
     }
   } catch (e) {}
   return null
@@ -278,19 +302,53 @@ async function fetchWareBusinessPrice(sku: string, cookie: string): Promise<numb
   return extractWarePrice(j)
 }
 
-// 小组件只走京东 App 自己的接口（wareBusiness，api.m.jd.com），
-// 一个源、一次请求，跟京豆那个小组件一样。
-// 之前 4 个源并行/顺序都试过，到点还是不更新、底行连“更新失败”
-// 都没有，说明小组件在后台被掐掉了，不是取价慢、是根本没跑完。
-// 原因：后台里 setTimeout 不准，Promise.race 的超时未必能触发，
-// 只要有一个源（p.3.cn、商品页）hang 住，小组件就卡死、
-// 被系统杀掉，连 catch 都跑不到，所以底行一直停在上次手动刷新的时间。
-// api.m.jd.com 是京豆验证过、后台能通的唯一一家，只留它。
-// p.3.cn、商品页这些备用源只留在 App（index.tsx）里手动刷时用，
-// 前台不怕 hang。
-// dbg 记下结果，万一 wareBusiness 也没价，报错里能看到。
+// p.3.cn / pm.3.cn 轻量价接口：返回 [{"id":"J_xxx","p":"479.00",...}]，
+// 比 wareBusiness 轻得多。之前小组件里拉不到价，是因为没带 Cookie
+// （这商品不登录就遮价，p.3.cn 直接回空）；App 里带 Cookie 拉是通的。
+// 带上 Cookie 再试，5 秒超时，拿到了就直接用，不用等 wareBusiness。
+async function fetchP3Price(sku: string, cookie: string): Promise<number | null> {
+  const headers: any = {
+    'User-Agent':
+      'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+    Referer: `https://item.jd.com/${sku}.html`,
+  }
+  if (cookie) headers.Cookie = cookie
+  for (const url of [
+    `https://p.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
+    `https://pm.3.cn/prices/mgets?skuIds=J_${sku}&type=1`,
+  ]) {
+    try {
+      const res: any = await fetchWithTimeout(url, { method: 'GET', headers }, 5000)
+      const list = await res.json()
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (String(item.id || '').replace(/^J_/, '') === String(sku)) {
+            const p = strictNum(item.p)
+            if (p != null) return p
+          }
+        }
+      }
+    } catch (e) {}
+  }
+  return null
+}
+
+// 小组件取价：先走轻量的 p.3.cn（带 Cookie，5 秒），
+// 再走 wareBusiness（api.m.jd.com，8 秒）。
+// 之前只走 wareBusiness 一个源：它带 Cookie 时回得慢，
+// 手动刷都要等很久，后台里 setTimeout 又不准，
+// 超时没触发就被系统掐掉，连报错都留不下，底行一直停在旧时间。
+// p.3.cn 轻、回得快，先试它；拿不到再走 wareBusiness。
+// dbg 记下结果，万一都没价，报错里能看到。
 async function fetchPrice(sku: string, cookie: string): Promise<number> {
   const dbg: string[] = []
+  try {
+    const p = await fetchP3Price(sku, cookie)
+    if (p != null) return p
+    dbg.push('p3 无价')
+  } catch (e) {
+    dbg.push('p3 ' + String((e as any)?.message || e).slice(0, 20))
+  }
   try {
     const p = await fetchWareBusinessPrice(sku, cookie)
     if (p != null) return p
@@ -679,10 +737,13 @@ function ErrorView({ message }: { message: string }) {
   )
 }
 
-// 主流程：先读缓存；到更新点（在更新窗口内、且上次更新在当前这个更新点之前）
-// 就自己拉一次新价，拉到了更新缓存，拉不到就显示旧缓存，
-// 绝不等、绝不转圈。最后告诉系统下一个更新点再跑一次。
-// 注意：这里不能用“距上次超过 6 小时”来判断——
+// 主流程分两步：
+//   整点（9:00、15:00…）拉价：到更新点、缓存还是旧的，
+//   就去京东拉一次新价存进共享缓存，下次跑在整点 + 5 分钟；
+//   整点 + 5 分钟取数：只读共享缓存显示，不再拉价，
+//   下次跑在下一个整点。
+// 拉价那一下慢，分开后取数那次读缓存一定快，
+// 不会被后台掐掉。注意：这里不能用“距上次超过 6 小时”来判断——
 // 手动在 App 里点一次刷新，就会把 updatedTs 刷成现在，
 // 那 15:00 那个点一看“才过了 4 小时”就直接跳过，
 // 于是自动更新永远不跑（2026-11-22 15:00 就是这么错过的）。
@@ -691,11 +752,24 @@ function ErrorView({ message }: { message: string }) {
   const now = new Date()
   const slots = getSlots()
   const cached = readCached()
+  const slot = currentSlot(now, slots)
+  const slotMs = slot.getTime()
+  const dispMs = slotMs + DISPLAY_DELAY_MINUTES * 60 * 1000
+  const cacheFresh =
+    cached &&
+    cached.price != null &&
+    cached.updatedTs != null &&
+    cached.updatedTs >= slotMs
   const needFetch =
     !cached ||
     cached.price == null ||
-    (isUpdateWindow(now, slots) &&
-      (!cached.updatedTs || cached.updatedTs < currentSlot(now, slots).getTime()))
+    (isUpdateWindow(now, slots) && !cacheFresh)
+  // 拉价阶段：还在整点 + 5 分钟之前、且缓存是旧的——去拉价，
+  // 拉完下次跑在整点 + 5 分钟（取数）。
+  // 取数阶段：已过整点 + 5 分钟，或缓存已是这个点的——
+  // 只读缓存显示，下次跑在下一个整点。
+  const isFetchPhase = needFetch && now.getTime() < dispMs
+  const nextReload = isFetchPhase ? new Date(dispMs) : nextSlot(now, slots)
   // 先立刻显示缓存，保证小组件绝不空白。
   // 到点自动跑时如果拉价 hang 住（后台 setTimeout 不准、
   // AbortSignal 断不开 fetch），后面的 present 跑不到，
@@ -706,13 +780,13 @@ function ErrorView({ message }: { message: string }) {
     Widget.present(<WidgetView data={cached} />, {
       reloadPolicy: {
         policy: 'after',
-        date: nextSlot(new Date(), slots),
+        date: nextReload,
       },
     })
     // 缓存还新鲜就不用再拉了，直接返回
-    if (!needFetch) return
+    if (!isFetchPhase) return
   }
-  if (needFetch && cached) {
+  if (isFetchPhase && cached) {
     // 有缓存时先拉，拉不到就用缓存顶上
     try {
       const p = await withTimeout(
@@ -750,7 +824,7 @@ function ErrorView({ message }: { message: string }) {
       Widget.present(<WidgetView data={data} />, {
         reloadPolicy: {
           policy: 'after',
-          date: nextSlot(new Date(), slots),
+          date: nextReload,
         },
       })
       return
@@ -772,7 +846,7 @@ function ErrorView({ message }: { message: string }) {
     Widget.present(<WidgetView data={cached} />, {
       reloadPolicy: {
         policy: 'after',
-        date: nextSlot(new Date(), slots),
+        date: nextReload,
       },
     })
     return
@@ -806,7 +880,7 @@ function ErrorView({ message }: { message: string }) {
     Widget.present(<WidgetView data={data} />, {
       reloadPolicy: {
         policy: 'after',
-        date: nextSlot(new Date(), slots),
+        date: nextReload,
       },
     })
     return
