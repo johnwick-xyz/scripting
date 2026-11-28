@@ -1,6 +1,7 @@
 // Loon 抓京东 Cookie（配合 Scripting 的京东价格监控、京东京豆小组件用）
 // 拦截京东 App 的请求，把请求头里的 Cookie 存到 $persistentStore，
 // 小组件会从 BoxJs 读这个 Cookie，不用在小组件里填账号密码。
+//
 // 用法：把这个文件传到 GitHub，拿到 raw 地址，填到
 // Jd.lpx 的 script-path 里；Loon 里启用插件后，
 // 打开京东 App 刷一次商品页，就会收到抓取成功的通知。
