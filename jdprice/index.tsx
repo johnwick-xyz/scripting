@@ -86,23 +86,19 @@ async function downloadImage(url: string): Promise<string> {
 // 更新时间点是用户在 App 里填的（默认 9:00、15:00、21:00），
 // 存在共享域 'jd_refresh_slots'，两个京东小组件共用。
 // 更新窗口 = 第一个点到最后一个点之后 1 小时（默认 9-22 点）。
-// 取数比整点晚 2 分钟：手动刷也要很久才拿到价，
-// 整点那一下可能正赶上忙、取数慢，小组件在后台等不起，
-// 往后挪 2 分钟再取，错开整点。
-const SLOT_DELAY_MINUTES = 2
+// 两步分开：整点拉价，整点 + 5 分钟小组件再去取数显示。
+// 这里的 nextSlot 是整点（拉价时间），App 里“下次”显示它。
 function nextSlot(now: Date, slots: number[]): Date {
   for (const h of slots) {
     const d = new Date(now)
     d.setHours(h, 0, 0, 0)
     if (d.getTime() > now.getTime()) {
-      d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
       return d
     }
   }
   const d = new Date(now)
   d.setDate(d.getDate() + 1)
   d.setHours(slots[0], 0, 0, 0)
-  d.setMinutes(d.getMinutes() + SLOT_DELAY_MINUTES)
   return d
 }
 
@@ -148,6 +144,20 @@ async function getBoxJsCookie(url: string): Promise<string> {
   return ''
 }
 
+// 严格取数：只认纯数字（"479"、"479.00"），
+// "4??" 这种被遮住的价格必须拒掉——parseFloat("4??") 会返回 4，
+// 小组件就显示 ¥4.00。Number("4??") 是 NaN，但这里用正则更稳。
+function strictNum(v: any): number | null {
+  if (typeof v === 'number') return v > 0 ? v : null
+  if (typeof v === 'string') {
+    const s = v.trim()
+    if (!/^\d+(\.\d+)?$/.test(s)) return null
+    const p = parseFloat(s)
+    return !isNaN(p) && p > 0 ? p : null
+  }
+  return null
+}
+
 // App 接口返回里价格位置不固定（data.price.p / price.p / jdPrice 等），
 // 挨个试，拿到大于 0 的数就返回；再扫一遍全文找 "jdPrice" 或 "price":{"p":…}。
 function extractWarePrice(j: any): number | null {
@@ -165,20 +175,20 @@ function extractWarePrice(j: any): number | null {
     j?.warePrice,
   ]
   for (const v of candidates) {
-    const p = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
-    if (!isNaN(p) && p > 0) return p
+    const p = strictNum(v)
+    if (p != null) return p
   }
   try {
     const s = JSON.stringify(j)
-    let m = s.match(/"jdPrice"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    let m = s.match(/"jdPrice"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"/)
     if (m) {
-      const p = parseFloat(m[1])
-      if (!isNaN(p) && p > 0) return p
+      const p = strictNum(m[1])
+      if (p != null) return p
     }
-    m = s.match(/"price"\s*:\s*\{\s*"p"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?/)
+    m = s.match(/"price"\s*:\s*\{\s*"p"\s*:\s*"([0-9]+(?:\.[0-9]+)?)"/)
     if (m) {
-      const p = parseFloat(m[1])
-      if (!isNaN(p) && p > 0) return p
+      const p = strictNum(m[1])
+      if (p != null) return p
     }
   } catch (e) {}
   return null
@@ -207,18 +217,12 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
     Referer: `https://item.jd.com/${sku}.html`,
   }
   if (cookie) headers.Cookie = cookie
-  // 先走京东 App 自己的接口 api.m.jd.com（京豆就是走这边的，能通）：
-  //   GET https://api.m.jd.com/client.action?functionId=wareBusiness&appid=productDetail&body={"skuId":"..."}
-  // p.3.cn 在小组件后台拉不到价，所以放前面；不行再走 p.3.cn。
+  // 先走轻量的 p.3.cn / pm.3.cn（带 Cookie，之前小组件里拉不到价
+  // 是因为没带 Cookie；App 里带 Cookie 拉是通的），回得快；
+  // 再走京东 App 自己的接口 wareBusiness（api.m.jd.com），
+  // 它带 Cookie 时回得慢，放后面。
   // dbg 记下每个源的结果，万一都失败，报错里能看到是哪一步出的错。
   const dbg: string[] = []
-  try {
-    const p = await fetchWareBusinessPrice(sku, cookie)
-    if (p != null) return p
-    dbg.push('wareBusiness 无价')
-  } catch (e) {
-    dbg.push('wareBusiness ' + String((e as any)?.message || e).slice(0, 20))
-  }
   for (const url of PRICE_URLS(sku)) {
     try {
       const res: any = await fetchJsonWithTimeout(url, { method: 'GET', headers })
@@ -226,8 +230,8 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
       let found = false
       for (const item of list) {
         if (String(item.id || '').replace(/^J_/, '') === String(sku) && item.p) {
-          const p = parseFloat(item.p)
-          if (!isNaN(p) && p > 0) return p
+          const p = strictNum(item.p)
+          if (p != null) return p
         }
       }
       if (!found)
@@ -238,6 +242,13 @@ async function fetchPrice(sku: string, cookie: string): Promise<number> {
           String((e as any)?.message || e).slice(0, 20),
       )
     }
+  }
+  try {
+    const p = await fetchWareBusinessPrice(sku, cookie)
+    if (p != null) return p
+    dbg.push('wareBusiness 无价')
+  } catch (e) {
+    dbg.push('wareBusiness ' + String((e as any)?.message || e).slice(0, 20))
   }
   // 备用：带 Cookie 拉商品页，页里 "jdPrice":"459.00" 就是真价；
   // 没登录时这里是 "4??"，带问号的不要。
